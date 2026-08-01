@@ -1,0 +1,33 @@
+{
+  "name": "@cs2hud/server",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "main": "./src/app.ts",
+  "exports": {
+    ".": "./src/app.ts",
+    "./env": "./src/config/env.ts"
+  },
+  "scripts": {
+    "dev": "tsx watch src/index.ts",
+    "start": "tsx src/index.ts",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@cs2hud/shared": "*",
+    "@fastify/cors": "^10.0.1",
+    "@fastify/static": "^10.1.2",
+    "@fastify/websocket": "^11.0.2",
+    "dotenv": "^16.4.7",
+    "fastify": "^5.2.0",
+    "obs-websocket-js": "^5.0.8",
+    "socket.io": "^4.8.3",
+    "ws": "^8.18.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.0",
+    "@types/ws": "^8.5.13",
+    "tsx": "^4.19.2",
+    "typescript": "^5.7.0"
+  }
+}

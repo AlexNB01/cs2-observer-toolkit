@@ -1,0 +1,25 @@
+{
+  "name": "cs2-hud-tool",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "workspaces": [
+    "packages/*"
+  ],
+  "scripts": {
+    "dev": "concurrently -k -n server,web -c blue,green \"npm run dev -w @cs2hud/server\" \"npm run dev -w @cs2hud/web\"",
+    "dev:server": "npm run dev -w @cs2hud/server",
+    "dev:web": "npm run dev -w @cs2hud/web",
+    "build": "npm run build -w @cs2hud/web",
+    "typecheck": "npm run typecheck -w @cs2hud/shared && npm run typecheck -w @cs2hud/server && npm run typecheck -w @cs2hud/web && npm run typecheck -w @cs2hud/desktop",
+    "desktop": "npm run start -w @cs2hud/desktop",
+    "desktop:dist": "npm run dist -w @cs2hud/desktop"
+  },
+  "devDependencies": {
+    "concurrently": "^9.1.0",
+    "typescript": "^5.7.0"
+  },
+  "allowScripts": {
+    "koffi@3.1.4": true
+  }
+}

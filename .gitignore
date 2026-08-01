@@ -1,0 +1,18 @@
+node_modules/
+dist/
+build/
+# packages/desktop/build/ holds tracked icon sources (not a build output
+# dir here), unlike every other "build"/"dist" in this repo.
+!packages/desktop/build/
+!packages/desktop/build/**
+release/
+*.log
+.env
+.env.local
+data/*.sqlite
+data/*.sqlite-journal
+data/*.sqlite-wal
+data/*.sqlite-shm
+.DS_Store
+Thumbs.db
+.claude/settings.local.json

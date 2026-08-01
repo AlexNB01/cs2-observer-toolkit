@@ -1,0 +1,32 @@
+appId: com.cs2hudtool.app
+productName: CS2 HUD Tool
+copyright: "CS2 HUD Tool"
+
+directories:
+  output: release
+  buildResources: build
+
+# dist/main.js is a self-contained esbuild bundle (fastify, ws, etc. all
+# inlined) — no node_modules needed at runtime, so we ship none.
+files:
+  - dist/**/*
+  - build/icon.png
+  - build/tray-icon.png
+  - package.json
+  - "!node_modules"
+
+extraResources:
+  - from: ../web/dist
+    to: web-dist
+  - from: ../../lhm-hud/build
+    to: lhm-hud-dist
+
+win:
+  target: nsis
+  icon: build/icon.png
+
+nsis:
+  oneClick: false
+  allowToChangeInstallationDirectory: true
+  createDesktopShortcut: true
+  createStartMenuShortcut: true
