@@ -76,3 +76,17 @@ export interface CinematicShot {
   shot: CinematicCameraShot;
   updatedAt: string;
 }
+
+/**
+ * Portable snapshot of everything the user configures — HLAE colors/
+ * toggles, Smart Observer settings, and every captured cinematic camera
+ * shot — for backing up or moving to a different install (see
+ * api/backup.ts). Bumping `version` is reserved for if the shape ever
+ * needs a breaking change; import doesn't currently branch on it.
+ */
+export interface BackupData {
+  version: 1;
+  exportedAt: string;
+  hudSettings: HudSettings;
+  cinematicShots: CinematicShot[];
+}

@@ -76,3 +76,34 @@ export function saveCinematicShot(input: {
 export function deleteCinematicShot(id: string): void {
   db.prepare("DELETE FROM cinematic_shots WHERE id = ?").run(id);
 }
+
+/** Wholesale replace, for restoring a backup (see api/backup.ts) — wipes every existing shot first. */
+export function replaceAllCinematicShots(shots: CinematicShot[]): void {
+  const now = new Date().toISOString();
+  db.exec("BEGIN");
+  try {
+    db.exec("DELETE FROM cinematic_shots");
+    const insert = db.prepare(
+      `INSERT INTO cinematic_shots (id, map_name, label, slot, x, y, z, pitch, yaw, updated_at)
+       VALUES (@id, @mapName, @label, @slot, @x, @y, @z, @pitch, @yaw, @updatedAt)`
+    );
+    for (const shot of shots) {
+      insert.run({
+        id: shot.id,
+        mapName: shot.mapName,
+        label: shot.label,
+        slot: shot.slot,
+        x: shot.shot.x,
+        y: shot.shot.y,
+        z: shot.shot.z,
+        pitch: shot.shot.pitch,
+        yaw: shot.shot.yaw,
+        updatedAt: now,
+      });
+    }
+    db.exec("COMMIT");
+  } catch (err) {
+    db.exec("ROLLBACK");
+    throw err;
+  }
+}
