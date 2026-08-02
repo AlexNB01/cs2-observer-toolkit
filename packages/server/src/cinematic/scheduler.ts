@@ -1,8 +1,9 @@
 import type { CinematicCameraShot } from "@cs2hud/shared";
 import { getCinematicCameras } from "../db/cinematic-store.js";
 import { broadcast } from "../ws/hub.js";
-import { sendConsoleCommand } from "../observer/netconsole.js";
+import { sendConsoleCommand, specPlayerByName } from "../observer/netconsole.js";
 import { resetAutoSwitchState } from "../observer/auto-switch.js";
+import { getObserverQueue } from "../gsi/observer.js";
 
 const SHOT_GAP_MS = 5000;
 
@@ -46,13 +47,24 @@ export function maybeRunCinematicSequence(mapName: string | undefined, enabled: 
   });
 
   // Hand control back to Smart Auto Observer once both shots have shown.
-  // The spec_goto commands above moved the real CS2 camera, but
-  // auto-switch's own "who we're watching" tracker never heard about
-  // it — if the top-ranked player happens to be unchanged since before
-  // freezetime (the common case, since nothing scores during freezetime),
-  // auto-switch would think it's already watching them and send nothing
-  // at all, leaving the camera parked at the fixed cinematic shot
-  // forever. Resetting here forces the very next GSI tick to send a
-  // fresh spec_player unconditionally, the same way a match_start does.
-  setTimeout(resetAutoSwitchState, order.length * SHOT_GAP_MS);
+  // spec_mode 6 (ROAMING, above) is a detached free camera with no player
+  // target — a later spec_player alone doesn't pull the view out of it,
+  // the game just accepts the target and ignores it until the *mode*
+  // itself changes. So this explicitly forces first-person mode back on
+  // (spec_mode 1) together with an immediate spec_player for whoever's
+  // currently top-ranked, rather than just waiting for the next natural
+  // auto-switch tick to (uselessly) send spec_player alone. Also resets
+  // auto-switch's "who we're watching" tracker, since it never heard
+  // about any of this — otherwise, if the top-ranked player is unchanged
+  // from before freezetime (the common case, nothing scores during
+  // freezetime), it would think it's already watching them and skip
+  // sending anything on future ticks too.
+  setTimeout(() => {
+    const top = getObserverQueue()[0];
+    if (top) {
+      sendConsoleCommand("spec_mode 1");
+      specPlayerByName(top.playerName);
+    }
+    resetAutoSwitchState();
+  }, order.length * SHOT_GAP_MS);
 }
