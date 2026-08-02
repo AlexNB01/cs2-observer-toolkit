@@ -2,6 +2,7 @@ import type { CinematicCameraShot } from "@cs2hud/shared";
 import { getCinematicCameras } from "../db/cinematic-store.js";
 import { broadcast } from "../ws/hub.js";
 import { sendConsoleCommand } from "../observer/netconsole.js";
+import { resetAutoSwitchState } from "../observer/auto-switch.js";
 
 const SHOT_GAP_MS = 5000;
 
@@ -43,4 +44,15 @@ export function maybeRunCinematicSequence(mapName: string | undefined, enabled: 
       broadcast({ kind: "cinematic_cue", side, sequenceIndex: i as 0 | 1, execCommand: `cinematic_${side}`, autoTriggered });
     }, i * SHOT_GAP_MS);
   });
+
+  // Hand control back to Smart Auto Observer once both shots have shown.
+  // The spec_goto commands above moved the real CS2 camera, but
+  // auto-switch's own "who we're watching" tracker never heard about
+  // it — if the top-ranked player happens to be unchanged since before
+  // freezetime (the common case, since nothing scores during freezetime),
+  // auto-switch would think it's already watching them and send nothing
+  // at all, leaving the camera parked at the fixed cinematic shot
+  // forever. Resetting here forces the very next GSI tick to send a
+  // fresh spec_player unconditionally, the same way a match_start does.
+  setTimeout(resetAutoSwitchState, order.length * SHOT_GAP_MS);
 }
