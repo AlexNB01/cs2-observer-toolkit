@@ -2,8 +2,8 @@
   "name": "@cs2hud/desktop",
   "private": true,
   "version": "0.1.0",
-  "description": "CS2 broadcast tool — HUD, admin panel, and producing helpers.",
-  "author": "CS2 HUD Tool",
+  "description": "CS2 broadcast companion — GSI setup, Smart Auto Observer, and HLAE integration.",
+  "author": "CS2 Observer Toolkit",
   "type": "module",
   "main": "dist/main.js",
   "scripts": {

@@ -10,7 +10,7 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 // from package.json's "name" — "@cs2hud/desktop" — which it splits on "/"
 // into a nested "@cs2hud\desktop" folder. Must be set before any
 // app.getPath() call.
-app.setName("CS2 HUD Tool");
+app.setName("CS2 Observer Toolkit");
 
 // @cs2hud/server's own `import "dotenv/config"` looks for .env in
 // process.cwd() — which, launched from Explorer or a shortcut, is *not*
@@ -23,7 +23,7 @@ const devEnvPath = path.join(__dirname, "..", "..", "server", ".env");
 const packagedEnvPath = path.join(app.getPath("userData"), ".env");
 const envPath = app.isPackaged ? packagedEnvPath : devEnvPath;
 
-const ENV_TEMPLATE = `# CS2 HUD Tool configuration.
+const ENV_TEMPLATE = `# CS2 Observer Toolkit configuration.
 # Point these at real paths, save, then restart the app from the tray icon.
 
 # CS2 install's game/csgo/cfg folder, e.g.:
@@ -76,7 +76,7 @@ function createWindow(port: number): void {
     height: 800,
     minWidth: 900,
     minHeight: 600,
-    title: "CS2 HUD Tool",
+    title: "CS2 Observer Toolkit",
     icon: windowIconPath,
     webPreferences: {
       contextIsolation: true,
@@ -107,7 +107,7 @@ function createWindow(port: number): void {
 
 function createTray(): void {
   tray = new Tray(trayIconPath);
-  tray.setToolTip("CS2 HUD Tool");
+  tray.setToolTip("CS2 Observer Toolkit");
   tray.setContextMenu(
     Menu.buildFromTemplate([
       { label: "Open admin panel", click: () => mainWindow?.show() },
@@ -147,9 +147,9 @@ app.whenReady().then(async () => {
   } catch (err) {
     const isPortConflict = (err as NodeJS.ErrnoException)?.code === "EADDRINUSE";
     dialog.showErrorBox(
-      "CS2 HUD Tool",
+      "CS2 Observer Toolkit",
       isPortConflict
-        ? `Port ${process.env.PORT} is already in use — CS2 HUD Tool may already be running (check the system tray) or another app is using that port.`
+        ? `Port ${process.env.PORT} is already in use — CS2 Observer Toolkit may already be running (check the system tray) or another app is using that port.`
         : `Failed to start: ${(err as Error).message}`
     );
     app.quit();

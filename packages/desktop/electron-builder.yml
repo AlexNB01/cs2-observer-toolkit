@@ -1,6 +1,6 @@
-appId: com.cs2hudtool.app
-productName: CS2 HUD Tool
-copyright: "CS2 HUD Tool"
+appId: com.cs2observertoolkit.app
+productName: CS2 Observer Toolkit
+copyright: "CS2 Observer Toolkit"
 
 directories:
   output: release

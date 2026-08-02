@@ -9,7 +9,7 @@ export const GSI_CFG_FILENAME = "gamestate_integration_cs2hud.cfg";
  * updates. Goes in <CS2 install>/game/csgo/cfg/.
  */
 export function generateGsiCfg(port: number): string {
-  return `"CS2 HUD Tool"
+  return `"CS2 Observer Toolkit"
 {
   "uri"        "http://localhost:${port}${env.gsiListenPath}"
   "timeout"    "5.0"

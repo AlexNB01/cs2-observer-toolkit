@@ -15,7 +15,7 @@ export function AdminLayout() {
   return (
     <div className="app-shell">
       <aside className="sidebar">
-        <h1>CS2 HUD Tool</h1>
+        <h1>CS2 Observer Toolkit</h1>
         <nav>
           {NAV_GROUPS.map((group) => (
             <div key={group.label}>
