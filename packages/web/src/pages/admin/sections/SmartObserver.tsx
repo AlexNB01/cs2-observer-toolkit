@@ -19,6 +19,7 @@ const EVENT_LABEL: Record<ObserverQueueItem["eventType"], string> = {
   BOMB_STACK: "Stacked with bomb",
   CT_STACK: "CT rotate/stack",
   UTILITY: "Grenade incoming",
+  PUSH_INCOMING: "Being rushed",
 };
 
 const SLOT_LABEL: Record<CinematicShot["slot"], string> = {

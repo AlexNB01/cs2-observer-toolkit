@@ -78,6 +78,19 @@ const GRENADE_ANTICIPATION_WEIGHT: Partial<Record<GsiFlightGrenade["type"], numb
   decoy: 15,
 };
 
+// A player rapidly closing the distance to a specific enemy (not just
+// moving fast in general — STACK_MIN_SPEED_UPS already covers that) is a
+// strong tell that a duel is about to happen wherever they're headed. The
+// *target* gets the priority bump, not the mover — the point is flagging
+// who's about to get run at, so the camera's already on them when contact
+// happens. CS2 walk speed is ~130ups (see STACK_MIN_SPEED_UPS); requiring
+// a closing rate below that still catches an angled approach (only part
+// of the mover's speed reduces the distance) without firing on someone
+// just repositioning sideways.
+const CLOSING_SPEED_THRESHOLD_UPS = 90;
+const CLOSING_SPEED_MAX = 35;
+const CLOSING_SPEED_RANGE_UNITS = 2000; // ignore closings starting absurdly far apart — likely GSI position noise, not a real approach
+
 interface DeathRecord {
   steamId: string;
   team: "CT" | "T";
@@ -152,9 +165,9 @@ export function resetObserverState(): void {
 /**
  * Section 5 — Smart Auto Observer. Detects discrete events (kills, shots
  * fired) into decaying score boosts, folds in situational conditions
- * (clutch, bomb, proximity, in-flight grenades, burning, low HP) recomputed
- * fresh every tick, and republishes the full ranked list for auto-switch.ts
- * to act on.
+ * (clutch, bomb, proximity, in-flight grenades, players closing in on an
+ * enemy, burning, low HP) recomputed fresh every tick, and republishes the
+ * full ranked list for auto-switch.ts to act on.
  * Broadcasts to the admin UI are throttled to BROADCAST_MIN_INTERVAL_MS
  * (except right after a discrete event, for responsiveness) since
  * situational scores can shift a little on every single tick and there's
@@ -213,6 +226,18 @@ function parsePosition(raw: string | undefined): Vec3 | undefined {
 
 function distance3d(a: Vec3, b: Vec3): number {
   return Math.sqrt((a.x - b.x) ** 2 + (a.y - b.y) ** 2 + (a.z - b.z) ** 2);
+}
+
+function subtract(a: Vec3, b: Vec3): Vec3 {
+  return { x: a.x - b.x, y: a.y - b.y, z: a.z - b.z };
+}
+
+function magnitude(v: Vec3): number {
+  return Math.sqrt(v.x ** 2 + v.y ** 2 + v.z ** 2);
+}
+
+function dot(a: Vec3, b: Vec3): number {
+  return a.x * b.x + a.y * b.y + a.z * b.z;
 }
 
 /**
@@ -444,6 +469,49 @@ function bumpStacks(current: GsiPayload, alivePlayers: [string, GsiPlayer][], no
 }
 
 /**
+ * Isolates each mover's *own* velocity component pointing directly at each
+ * enemy — the scalar projection of their displacement this tick onto the
+ * mover→target direction — rather than just how fast the pair's raw
+ * distance is shrinking. That distinction matters: raw distance-closing is
+ * symmetric (it shrinks the same amount whether the mover approaches a
+ * stationary target, or vice versa), which would wrongly flag a standing-
+ * still player as "rushing" whoever's actually running at them. A mover
+ * with ~zero displacement this tick can't be projected onto anything
+ * meaningful, so they're skipped outright. Bumps only the target being run
+ * at, never the mover — if both players are closing on each other, both
+ * get evaluated as movers in turn, so both would end up flagged.
+ */
+function bumpClosingSpeed(alivePlayers: [string, GsiPlayer][], previousPositions: Map<string, PositionSample>, now: number, bump: BumpFn): void {
+  for (const [moverId, mover] of alivePlayers) {
+    const moverPos = parsePosition(mover.position);
+    const prevMover = previousPositions.get(moverId);
+    if (!moverPos || !prevMover) continue;
+
+    const dtSeconds = (now - prevMover.at) / 1000;
+    if (dtSeconds <= 0 || dtSeconds > 2) continue;
+
+    const moverDelta = subtract(moverPos, prevMover.pos);
+    if (magnitude(moverDelta) < 1e-6) continue; // didn't move at all this tick — can't be "running at" anyone
+
+    for (const [targetId, target] of alivePlayers) {
+      if (target.team === mover.team) continue;
+      const targetPos = parsePosition(target.position);
+      if (!targetPos) continue;
+
+      const toTarget = subtract(targetPos, moverPos);
+      const toTargetDist = magnitude(toTarget);
+      if (toTargetDist > CLOSING_SPEED_RANGE_UNITS || toTargetDist < 1e-6) continue;
+
+      const closingRate = dot(moverDelta, toTarget) / toTargetDist / dtSeconds;
+      if (closingRate < CLOSING_SPEED_THRESHOLD_UPS) continue;
+
+      const amount = Math.min(CLOSING_SPEED_MAX, 10 + (closingRate - CLOSING_SPEED_THRESHOLD_UPS) * 0.3);
+      bump(targetId, amount, "PUSH_INCOMING");
+    }
+  }
+}
+
+/**
  * Rebuilds the full ranked list from scratch every tick: each player's
  * total is their decaying event score plus whatever situational
  * conditions are true for them right now. The eventType on each returned
@@ -489,7 +557,12 @@ function computeRankedScores(current: GsiPayload, now: number): ObserverQueueIte
   bumpClutch("CT", countAlive(allplayers, "CT"), countAlive(allplayers, "T"), allplayers, bump);
   bumpClutch("T", countAlive(allplayers, "T"), countAlive(allplayers, "CT"), allplayers, bump);
   bumpProximity(alivePlayers, bump);
+  // Snapshot before bumpStacks, which overwrites lastPositions for this
+  // tick via its own playerSpeed() calls — bumpClosingSpeed needs the
+  // *previous* tick's positions, independent of stack processing order.
+  const previousPositions = new Map(lastPositions);
   bumpStacks(current, alivePlayers, now, bump);
+  bumpClosingSpeed(alivePlayers, previousPositions, now, bump);
   bumpGrenadeAnticipation(current, alivePlayers, bump);
 
   const items: ObserverQueueItem[] = [];
