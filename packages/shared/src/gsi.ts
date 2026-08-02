@@ -130,6 +130,7 @@ export type NormalizedEventType =
   | "player_hurt"
   | "bomb_planting"
   | "bomb_planted"
+  | "bomb_defusing"
   | "bomb_defused"
   | "bomb_exploded"
   | "mvp"
@@ -148,7 +149,7 @@ export interface KillEvent extends NormalizedEventBase {
 }
 
 export interface BombEvent extends NormalizedEventBase {
-  type: "bomb_planting" | "bomb_planted" | "bomb_defused" | "bomb_exploded";
+  type: "bomb_planting" | "bomb_planted" | "bomb_defusing" | "bomb_defused" | "bomb_exploded";
   playerSteamId?: string;
 }
 
@@ -170,7 +171,7 @@ export interface StateSnapshotEvent extends NormalizedEventBase {
 export interface GenericNormalizedEvent extends NormalizedEventBase {
   type: Exclude<
     NormalizedEventType,
-    "kill" | "bomb_planting" | "bomb_planted" | "bomb_defused" | "bomb_exploded" | "round_end" | "mvp" | "state_snapshot"
+    "kill" | "bomb_planting" | "bomb_planted" | "bomb_defusing" | "bomb_defused" | "bomb_exploded" | "round_end" | "mvp" | "state_snapshot"
   >;
 }
 

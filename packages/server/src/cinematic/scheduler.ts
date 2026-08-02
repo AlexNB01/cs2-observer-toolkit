@@ -7,8 +7,8 @@ import { getObserverQueue } from "../gsi/observer.js";
 import { aliasName } from "./cfg.js";
 
 const SHOT_GAP_MS = 5000; // freezetime sequence: time each of the 2 shots stays up
-const BOMB_PLANT_SHOT_DURATION_MS = 4000;
-const BOMB_PLANT_MAX_DISTANCE_UNITS = 1500; // skip if no captured shot is anywhere near the plant
+const BOMB_SITE_SHOT_DURATION_MS = 4000;
+const BOMB_SITE_MAX_DISTANCE_UNITS = 1500; // skip if no captured shot is anywhere near the plant/defuse
 const QUIET_MOMENT_SHOT_DURATION_MS = 4000;
 const QUIET_MOMENT_COOLDOWN_MS = 45_000; // shared across all three triggers, so filler shots don't stack right after a real one
 const QUIET_SCORE_THRESHOLD = 30; // ambient proximity/decaying-engaging routinely sits in the 20s even when nothing's actually happening — 20 almost never triggered
@@ -68,10 +68,25 @@ function handBackToObserver(): void {
   resetAutoSwitchState();
 }
 
-function fireShot(shot: CinematicShot, trigger: "freezetime" | "bomb_plant" | "quiet_moment"): void {
+function fireShot(shot: CinematicShot, trigger: "freezetime" | "bomb_plant" | "bomb_defuse" | "quiet_moment"): void {
   const autoTriggered = sendConsoleCommand(specGotoCommand(shot.shot));
   broadcast({ kind: "cinematic_cue", trigger, label: shot.label, execCommand: aliasName(shot), autoTriggered });
   lastCinematicActivityAt = Date.now();
+}
+
+/** Shared by the plant and defuse triggers: cut to whichever captured shot (any slot) is nearest `position`, then hand back. */
+function showNearestBombSiteShot(mapName: string, position: Vec3, trigger: "bomb_plant" | "bomb_defuse"): void {
+  let nearest: { shot: CinematicShot; distance: number } | null = null;
+  for (const shot of listCinematicShots(mapName)) {
+    const distance = distance3d(position, shot.shot);
+    if (distance > BOMB_SITE_MAX_DISTANCE_UNITS) continue;
+    if (!nearest || distance < nearest.distance) nearest = { shot, distance };
+  }
+  if (!nearest) return;
+
+  suppressAutoSwitchUntil(Date.now() + BOMB_SITE_SHOT_DURATION_MS + 500);
+  fireShot(nearest.shot, trigger);
+  setTimeout(handBackToObserver, BOMB_SITE_SHOT_DURATION_MS);
 }
 
 /**
@@ -116,22 +131,35 @@ export function maybeRunCinematicSequence(mapName: string | undefined, roundNumb
  */
 export function maybeShowBombPlantShot(mapName: string | undefined, bombPosition: string | undefined, enabled: boolean): void {
   if (!enabled || !mapName) return;
-
   const plantPos = parsePosition(bombPosition);
   if (!plantPos) return;
+  showNearestBombSiteShot(mapName, plantPos, "bomb_plant");
+}
 
-  let nearest: { shot: CinematicShot; distance: number } | null = null;
-  for (const shot of listCinematicShots(mapName)) {
-    const shotPos: Vec3 = shot.shot;
-    const distance = distance3d(plantPos, shotPos);
-    if (distance > BOMB_PLANT_MAX_DISTANCE_UNITS) continue;
-    if (!nearest || distance < nearest.distance) nearest = { shot, distance };
-  }
-  if (!nearest) return;
+/**
+ * Called on bomb_defusing, but only when the defuser's whole enemy team is
+ * already dead — with nobody left to contest it, there's no risk of
+ * missing a fight elsewhere by cutting away, so it's a clean broadcast
+ * beat rather than a gamble. (While enemies are still alive, the reactive
+ * priority in gsi/observer.ts keeps the camera on the defuser instead —
+ * see its BOMB_SITUATIONAL comment.)
+ */
+export function maybeShowBombDefuseShot(payload: GsiPayload, enabled: boolean): void {
+  if (!enabled) return;
 
-  suppressAutoSwitchUntil(Date.now() + BOMB_PLANT_SHOT_DURATION_MS + 500);
-  fireShot(nearest.shot, "bomb_plant");
-  setTimeout(handBackToObserver, BOMB_PLANT_SHOT_DURATION_MS);
+  const mapName = payload.map?.name;
+  const bomb = payload.bomb;
+  if (!mapName || !bomb?.player) return;
+
+  const defuser = payload.allplayers?.[bomb.player];
+  const defusePos = parsePosition(bomb.position);
+  if (!defuser || !defusePos) return;
+
+  const enemyTeam: "CT" | "T" = defuser.team === "CT" ? "T" : "CT";
+  const enemiesAlive = Object.values(payload.allplayers ?? {}).some((p) => p.team === enemyTeam && (p.state?.health ?? 0) > 0);
+  if (enemiesAlive) return;
+
+  showNearestBombSiteShot(mapName, defusePos, "bomb_defuse");
 }
 
 /**

@@ -480,14 +480,20 @@ function computeRankedScores(current: GsiPayload, now: number): ObserverQueueIte
 
     if ((player.state?.burning ?? 0) > 0) bump(steamId, BURNING_SITUATIONAL, "BURNING");
 
-    // Planting itself is no longer scored here — it's a cinematic
-    // establishing-shot trigger instead (see cinematic/scheduler.ts's
-    // maybeShowBombPlantShot, fired on the bomb_planting event), so the
-    // planter's own priority no longer fights that shot for the camera.
-    // Defusing keeps its bonus — there's no cinematic trigger for it, and
-    // it's a self-contained, isolated moment worth locking onto.
+    // Planting is never scored here — it's a cinematic establishing-shot
+    // trigger instead (see cinematic/scheduler.ts's maybeShowBombPlantShot,
+    // fired on bomb_planting), so the planter's own priority never fights
+    // that shot for the camera. Defusing gets the same treatment, but only
+    // once the enemy team is fully dead — with nobody left to contest it,
+    // maybeShowBombDefuseShot takes the cinematic shot instead (see
+    // gsi/listener.ts's bomb_defusing handling). While enemies are still
+    // alive there's real risk of an interrupt, so the reactive priority
+    // keeps the camera locked on the defuser as before.
     if (current.bomb?.state === "defusing" && current.bomb?.player === steamId) {
-      bump(steamId, BOMB_SITUATIONAL, "BOMB");
+      const enemyTeam: "CT" | "T" = player.team === "CT" ? "T" : "CT";
+      if (countAlive(allplayers, enemyTeam) > 0) {
+        bump(steamId, BOMB_SITUATIONAL, "BOMB");
+      }
     }
   }
 

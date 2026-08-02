@@ -27,9 +27,10 @@ const SLOT_LABEL: Record<CinematicShot["slot"], string> = {
   poi: "Point of interest (bomb plant / quiet moment)",
 };
 
-const TRIGGER_LABEL: Record<"freezetime" | "bomb_plant" | "quiet_moment", string> = {
+const TRIGGER_LABEL: Record<"freezetime" | "bomb_plant" | "bomb_defuse" | "quiet_moment", string> = {
   freezetime: "Freezetime",
   bomb_plant: "Bomb plant",
+  bomb_defuse: "Uncontested defuse",
   quiet_moment: "Quiet moment",
 };
 
@@ -214,7 +215,7 @@ export function SmartObserver() {
         <Row label="Freezetime shots" hint="Winner's side first, rotates through however many CT/T shots you've captured for the map">
           <Toggle checked={settings.cinematicFreezetimeShotsEnabled} onChange={(v) => update({ cinematicFreezetimeShotsEnabled: v })} />
         </Row>
-        <Row label="Bomb plant shots" hint="As planting starts, cuts to whichever captured shot (any type) is nearest the plant">
+        <Row label="Bomb plant shots" hint="As planting starts (or, if the enemy team is already fully dead, as defusing starts) cuts to whichever captured shot is nearest">
           <Toggle checked={settings.cinematicBombPlantShotsEnabled} onChange={(v) => update({ cinematicBombPlantShotsEnabled: v })} />
         </Row>
         <Row label="Quiet-moment filler shots" hint="Cuts briefly to a point-of-interest shot (e.g. mid) when players are near it and nothing else is happening">

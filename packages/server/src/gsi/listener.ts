@@ -3,7 +3,7 @@ import type { GsiPayload } from "@cs2hud/shared";
 import { normalizeGsiPayload } from "./normalizer.js";
 import { processObserverEvents } from "./observer.js";
 import { readHudSettings } from "../db/hud-settings-store.js";
-import { maybeRunCinematicSequence, maybeShowBombPlantShot, maybeShowQuietMomentShot, recordRoundEnd } from "../cinematic/scheduler.js";
+import { maybeRunCinematicSequence, maybeShowBombDefuseShot, maybeShowBombPlantShot, maybeShowQuietMomentShot, recordRoundEnd } from "../cinematic/scheduler.js";
 import { maybeAutoSwitch, resetAutoSwitchState } from "../observer/auto-switch.js";
 import { broadcast } from "../ws/hub.js";
 import { db } from "../db/client.js";
@@ -82,6 +82,10 @@ export function registerGsiListener(app: FastifyInstance): void {
 
       if (event.type === "bomb_planting") {
         maybeShowBombPlantShot(payload.map?.name, payload.bomb?.position, settings.cinematicBombPlantShotsEnabled);
+      }
+
+      if (event.type === "bomb_defusing") {
+        maybeShowBombDefuseShot(payload, settings.cinematicBombPlantShotsEnabled);
       }
 
       if (event.type === "round_end") {
