@@ -7,7 +7,7 @@ export type ServerToClientMessage =
   | { kind: "settings_updated"; settings: HudSettings }
   | { kind: "observer_queue_updated"; queue: ObserverQueueItem[] }
   | { kind: "observer_focus_status"; cs2Focused: boolean }
-  | { kind: "cinematic_cue"; side: "ct" | "t"; sequenceIndex: 0 | 1; execCommand: string }
+  | { kind: "cinematic_cue"; side: "ct" | "t"; sequenceIndex: 0 | 1; execCommand: string; autoTriggered: boolean }
   | { kind: "hello"; clientId: string };
 
 /** Messages sent from a client (the admin panel) to the server. */

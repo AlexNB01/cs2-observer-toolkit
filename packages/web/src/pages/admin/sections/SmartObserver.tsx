@@ -72,7 +72,11 @@ export function SmartObserver() {
   useHudSocket((message) => {
     if (message.kind === "observer_queue_updated") setQueue(message.queue);
     if (message.kind === "cinematic_cue") {
-      setLastCue(`${message.side.toUpperCase()} shot — run "${message.execCommand}" (or bind it to a key)`);
+      setLastCue(
+        message.autoTriggered
+          ? `${message.side.toUpperCase()} shot — camera moved automatically`
+          : `${message.side.toUpperCase()} shot — netconsole not connected, run "${message.execCommand}" yourself (or bind it to a key)`
+      );
     }
   });
 

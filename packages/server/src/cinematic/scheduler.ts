@@ -1,5 +1,7 @@
+import type { CinematicCameraShot } from "@cs2hud/shared";
 import { getCinematicCameras } from "../db/cinematic-store.js";
 import { broadcast } from "../ws/hub.js";
+import { sendConsoleCommand } from "../observer/netconsole.js";
 
 const SHOT_GAP_MS = 5000;
 
@@ -10,14 +12,18 @@ export function recordRoundEnd(winningTeam?: "CT" | "T"): void {
   if (winningTeam) lastRoundWinner = winningTeam;
 }
 
+function specGotoCommand(shot: CinematicCameraShot): string {
+  return `spec_mode 6; spec_goto ${shot.x} ${shot.y} ${shot.z} ${shot.pitch} ${shot.yaw}`;
+}
+
 /**
- * Section 5 — "order tied to the previous round": the side that just won
- * gets the first cinematic shot, then the other side, before handing
- * control back to the Smart Observer. This only broadcasts a *cue* (which
- * side, which exec alias) — actually moving the in-game camera still
- * needs the user to run that alias (bound to a key) or the native
- * key-sim companion process from spec section 15; there's no way to
- * inject console input into CS2 from a browser.
+ * "Order tied to the previous round": the side that just won gets the
+ * first cinematic shot, then the other side, before handing control back
+ * to the Smart Observer. Sends the spec_goto command straight over CS2's
+ * netconsole (same connection Smart Auto Observer's auto-switch uses) —
+ * this moves the camera itself. Falls back to a manual cue (the
+ * `cinematic_ct`/`cinematic_t` alias from an installed cinematic.cfg, for
+ * a keybind) when netconsole isn't connected.
  */
 export function maybeRunCinematicSequence(mapName: string | undefined, enabled: boolean): void {
   if (!enabled || !mapName) return;
@@ -31,8 +37,10 @@ export function maybeRunCinematicSequence(mapName: string | undefined, enabled: 
 
   order.forEach((team, i) => {
     const side = team === "CT" ? "ct" : "t";
+    const shot = team === "CT" ? cameras.ctShot! : cameras.tShot!;
     setTimeout(() => {
-      broadcast({ kind: "cinematic_cue", side, sequenceIndex: i as 0 | 1, execCommand: `cinematic_${side}` });
+      const autoTriggered = sendConsoleCommand(specGotoCommand(shot));
+      broadcast({ kind: "cinematic_cue", side, sequenceIndex: i as 0 | 1, execCommand: `cinematic_${side}`, autoTriggered });
     }, i * SHOT_GAP_MS);
   });
 }

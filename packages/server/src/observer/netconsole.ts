@@ -61,23 +61,32 @@ function ensureConnecting(): void {
 
 /**
  * CS2's netconsole (the "-netconport <port>" launch option — a raw local
- * TCP text console) lets us send `spec_player "<name>"` and target a
- * player directly by name. GSI already gives us every player's name, so
- * unlike simulated keypresses bound to `spec_player <index>` (the previous
- * approach — see git history), there's no index-to-player mapping to
- * learn, hence no calibration step, and no dependency on CS2 having OS
- * focus either, since this talks to the engine directly rather than
- * simulating input at the OS level.
+ * TCP text console) is a generic text console, not something special-cased
+ * for any one command — anything typeable in CS2's own console can be sent
+ * here (spec_player, spec_goto, exec, aliases, ...). Used by both
+ * specPlayerByName (Smart Auto Observer's auto-switch) and the cinematic
+ * freezetime camera sequence (see cinematic/scheduler.ts).
  */
-export function specPlayerByName(name: string): boolean {
+export function sendConsoleCommand(command: string): boolean {
   ensureConnecting();
   if (!isNetconsoleConnected() || !socket) return false;
+  socket.write(`${command}\n`);
+  return true;
+}
 
+/**
+ * Targets a player directly by name via `spec_player "<name>"`. GSI already
+ * gives us every player's name, so unlike simulated keypresses bound to
+ * `spec_player <index>` (the previous approach — see git history), there's
+ * no index-to-player mapping to learn, hence no calibration step, and no
+ * dependency on CS2 having OS focus either, since this talks to the engine
+ * directly rather than simulating input at the OS level.
+ */
+export function specPlayerByName(name: string): boolean {
   // Strip quotes so a (very unlikely) quote in a player name can't break
   // out of the quoted console command argument.
   const safeName = name.replace(/"/g, "");
-  socket.write(`spec_player "${safeName}"\n`);
-  return true;
+  return sendConsoleCommand(`spec_player "${safeName}"`);
 }
 
 export function getNetconsoleStatus(): { connected: boolean; port: number } {
