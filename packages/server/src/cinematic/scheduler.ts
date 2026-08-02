@@ -7,7 +7,13 @@ import { getObserverQueue } from "../gsi/observer.js";
 import { aliasName } from "./cfg.js";
 
 const SHOT_GAP_MS = 5000; // freezetime sequence: time each of the 2 shots stays up
-const BOMB_SITE_SHOT_DURATION_MS = 4000;
+const BOMB_PLANT_SHOT_DURATION_MS = 4000; // roughly matches the ~3.2s plant animation
+// CS2's actual defuse timer — 5s with a kit, 10s without. The shot stays up
+// for the whole defuse (not just a quick establishing cut) since this
+// trigger only ever fires when it's genuinely uncontested — there's
+// nothing else worth cutting to in the meantime.
+const BOMB_DEFUSE_SHOT_DURATION_WITH_KIT_MS = 5000;
+const BOMB_DEFUSE_SHOT_DURATION_NO_KIT_MS = 10_000;
 const BOMB_SITE_MAX_DISTANCE_UNITS = 1500; // skip if no captured shot is anywhere near the plant/defuse
 const QUIET_MOMENT_SHOT_DURATION_MS = 4000;
 const QUIET_MOMENT_COOLDOWN_MS = 45_000; // shared across all three triggers, so filler shots don't stack right after a real one
@@ -74,8 +80,8 @@ function fireShot(shot: CinematicShot, trigger: "freezetime" | "bomb_plant" | "b
   lastCinematicActivityAt = Date.now();
 }
 
-/** Shared by the plant and defuse triggers: cut to whichever captured shot (any slot) is nearest `position`, then hand back. */
-function showNearestBombSiteShot(mapName: string, position: Vec3, trigger: "bomb_plant" | "bomb_defuse"): void {
+/** Shared by the plant and defuse triggers: cut to whichever captured shot (any slot) is nearest `position`, then hand back after durationMs. */
+function showNearestBombSiteShot(mapName: string, position: Vec3, trigger: "bomb_plant" | "bomb_defuse", durationMs: number): void {
   let nearest: { shot: CinematicShot; distance: number } | null = null;
   for (const shot of listCinematicShots(mapName)) {
     const distance = distance3d(position, shot.shot);
@@ -84,9 +90,9 @@ function showNearestBombSiteShot(mapName: string, position: Vec3, trigger: "bomb
   }
   if (!nearest) return;
 
-  suppressAutoSwitchUntil(Date.now() + BOMB_SITE_SHOT_DURATION_MS + 500);
+  suppressAutoSwitchUntil(Date.now() + durationMs + 500);
   fireShot(nearest.shot, trigger);
-  setTimeout(handBackToObserver, BOMB_SITE_SHOT_DURATION_MS);
+  setTimeout(handBackToObserver, durationMs);
 }
 
 /**
@@ -133,7 +139,7 @@ export function maybeShowBombPlantShot(mapName: string | undefined, bombPosition
   if (!enabled || !mapName) return;
   const plantPos = parsePosition(bombPosition);
   if (!plantPos) return;
-  showNearestBombSiteShot(mapName, plantPos, "bomb_plant");
+  showNearestBombSiteShot(mapName, plantPos, "bomb_plant", BOMB_PLANT_SHOT_DURATION_MS);
 }
 
 /**
@@ -159,7 +165,8 @@ export function maybeShowBombDefuseShot(payload: GsiPayload, enabled: boolean): 
   const enemiesAlive = Object.values(payload.allplayers ?? {}).some((p) => p.team === enemyTeam && (p.state?.health ?? 0) > 0);
   if (enemiesAlive) return;
 
-  showNearestBombSiteShot(mapName, defusePos, "bomb_defuse");
+  const durationMs = defuser.state?.defusekit ? BOMB_DEFUSE_SHOT_DURATION_WITH_KIT_MS : BOMB_DEFUSE_SHOT_DURATION_NO_KIT_MS;
+  showNearestBombSiteShot(mapName, defusePos, "bomb_defuse", durationMs);
 }
 
 /**

@@ -31,6 +31,8 @@ export interface GsiPlayerState {
   health: number;
   armor: number;
   helmet: boolean;
+  /** Only ever present (and true) for CTs carrying a defuse kit. */
+  defusekit?: boolean;
   flashed: number;
   smoked: number;
   burning: number;
