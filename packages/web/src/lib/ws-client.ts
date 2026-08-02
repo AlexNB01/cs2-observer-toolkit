@@ -9,9 +9,8 @@ export interface HudSocketState {
 
 /**
  * Connects to the shared WS hub (see server/src/ws/hub.ts) and reconnects
- * with backoff on drop. Any page (admin, HUD, minimap, veto) can use this
- * to receive gsi_event / settings_updated / veto_updated pushes, and admin
- * pages can use `send` for things like trigger_preview.
+ * with backoff on drop. The admin panel uses this to receive gsi_event /
+ * settings_updated / observer_queue_updated / cinematic_cue pushes.
  */
 export function useHudSocket(onMessage?: (message: ServerToClientMessage) => void): HudSocketState {
   const [connected, setConnected] = useState(false);

@@ -84,6 +84,15 @@ export interface GsiPayload {
   allplayers?: Record<string, GsiPlayer>;
   bomb?: GsiBomb;
   phase_countdowns?: { phase: string; phase_ends_in: string };
+  /**
+   * Requires "allgrenades" "1" in the GSI cfg (see gsi/cfg-generator.ts) —
+   * without it CS2 never includes this key at all, which is what silently
+   * broke grenade rendering in the LHM HUD's minimap (lhm-hud/src/HUD/Radar)
+   * despite that rendering code itself being correct. We don't process this
+   * server-side ourselves — it's relayed through verbatim for the HUD's own
+   * client-side csgogsi digest() to parse. Keyed by grenade entity ID.
+   */
+  grenades?: Record<string, unknown>;
   previously?: unknown; // diff of the previous payload, shape mirrors the full payload
   added?: unknown; // keys newly present since the previous payload
 }

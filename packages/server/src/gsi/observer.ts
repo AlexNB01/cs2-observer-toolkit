@@ -33,6 +33,15 @@ const TRADE_BONUS = 30;
 const CLUTCH_WIN_BASE_BONUS = 40;
 const CLUTCH_WIN_BONUS_PER_ENEMY = 20;
 const ENGAGING_SHOT_BOOST = 10;
+// Hard ceiling on the engaging (shots-fired) contribution, independent of
+// weapon fire rate or magazine size. Without this, a high-RPM/large-mag
+// weapon (Negev: ~750rpm, 150-round mag) held on full auto into a wall
+// converges to a steady-state score of roughly rate * boost *
+// (halfLife/ln2) ≈ 12.5 * 10 * 7.2s ≈ 900 — comfortably clutch-tier —
+// just from spraying, with nobody actually being fought. Capping the
+// *decayed value* at read time bounds that regardless of rate or
+// duration; it can't be raised by firing faster or longer.
+const ENGAGING_CAP = 30;
 
 const CLUTCH_SITUATIONAL_BASE = 1000;
 const CLUTCH_SITUATIONAL_PER_ENEMY = 10;
@@ -84,7 +93,12 @@ type BumpFn = (steamId: string, amount: number, type: ObserverQueueItem["eventTy
 
 let latestScores: ObserverQueueItem[] = [];
 let recentDeaths: DeathRecord[] = [];
-let eventScores = new Map<string, EventAccumulator>();
+// Kept separate (rather than one shared accumulator) specifically so
+// ENGAGING_CAP can bound just the shots-fired contribution — kills are
+// already naturally bounded (at most 5 round_kills, headshot/trade/clutch
+// bonuses all capped by real game state), so they don't need a ceiling.
+let killEventScores = new Map<string, EventAccumulator>();
+let engagingEventScores = new Map<string, EventAccumulator>();
 let lastAmmoByPlayer = new Map<string, AmmoRecord>();
 let lastPositions = new Map<string, PositionSample>();
 let latestAliveSteamIds = new Set<string>();
@@ -110,7 +124,8 @@ export function isPlayerAlive(steamId: string): boolean {
 export function resetObserverState(): void {
   latestScores = [];
   recentDeaths = [];
-  eventScores = new Map();
+  killEventScores = new Map();
+  engagingEventScores = new Map();
   lastAmmoByPlayer = new Map();
   lastPositions = new Map();
   latestAliveSteamIds = new Set();
@@ -152,16 +167,22 @@ export function processObserverEvents(events: NormalizedEvent[], current: GsiPay
   }
 }
 
-function decayedEventScore(steamId: string, now: number): number {
-  const acc = eventScores.get(steamId);
+function decayedScore(map: Map<string, EventAccumulator>, steamId: string, now: number): number {
+  const acc = map.get(steamId);
   if (!acc) return 0;
   const halfLives = (now - acc.lastDecayAt) / EVENT_SCORE_HALF_LIFE_MS;
   return acc.score * Math.pow(0.5, halfLives);
 }
 
-function addEventScore(steamId: string, amount: number, eventType: ObserverQueueItem["eventType"], now: number): void {
-  const current = decayedEventScore(steamId, now);
-  eventScores.set(steamId, { score: current + amount, lastDecayAt: now, topEventType: eventType });
+function accumulateScore(
+  map: Map<string, EventAccumulator>,
+  steamId: string,
+  amount: number,
+  eventType: ObserverQueueItem["eventType"],
+  now: number
+): void {
+  const current = decayedScore(map, steamId, now);
+  map.set(steamId, { score: current + amount, lastDecayAt: now, topEventType: eventType });
 }
 
 function parsePosition(raw: string | undefined): Vec3 | undefined {
@@ -228,7 +249,7 @@ function updateEngagingScores(current: GsiPayload, now: number): boolean {
     lastAmmoByPlayer.set(steamId, { weaponName: activeWeapon.name, ammoClip: activeWeapon.ammo_clip });
 
     if (shotFired) {
-      addEventScore(steamId, ENGAGING_SHOT_BOOST, "ENGAGING", now);
+      accumulateScore(engagingEventScores, steamId, ENGAGING_SHOT_BOOST, "ENGAGING", now);
       fired = true;
     }
   }
@@ -275,7 +296,7 @@ function handleKill(kill: KillEvent, current: GsiPayload, now: number): void {
     recentDeaths = recentDeaths.filter((d) => kill.timestamp - d.timestamp < RECENT_DEATH_WINDOW_MS);
   }
 
-  addEventScore(kill.attackerSteamId, amount, eventType, now);
+  accumulateScore(killEventScores, kill.attackerSteamId, amount, eventType, now);
 }
 
 function bumpClutch(team: "CT" | "T", aliveOnTeam: number, aliveOnEnemyTeam: number, allplayers: Record<string, GsiPlayer>, bump: BumpFn): void {
@@ -392,9 +413,13 @@ function computeRankedScores(current: GsiPayload, now: number): ObserverQueueIte
   };
 
   for (const [steamId, player] of alivePlayers) {
-    const decayed = decayedEventScore(steamId, now);
-    const acc = eventScores.get(steamId);
-    if (decayed > 0.5 && acc) bump(steamId, decayed, acc.topEventType);
+    const killDecayed = decayedScore(killEventScores, steamId, now);
+    const killAcc = killEventScores.get(steamId);
+    if (killDecayed > 0.5 && killAcc) bump(steamId, killDecayed, killAcc.topEventType);
+
+    // Capped regardless of how much has accumulated — see ENGAGING_CAP.
+    const engagingDecayed = Math.min(decayedScore(engagingEventScores, steamId, now), ENGAGING_CAP);
+    if (engagingDecayed > 0.5) bump(steamId, engagingDecayed, "ENGAGING");
 
     const health = player.state?.health ?? 0;
     bump(steamId, ((100 - health) / 100) * LOW_HP_MAX, "LOW_HP");

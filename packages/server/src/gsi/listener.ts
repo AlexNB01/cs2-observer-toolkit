@@ -3,12 +3,9 @@ import type { GsiPayload } from "@cs2hud/shared";
 import { normalizeGsiPayload } from "./normalizer.js";
 import { processObserverEvents } from "./observer.js";
 import { readHudSettings } from "../db/hud-settings-store.js";
-import { readObsConfig } from "../db/obs-config-store.js";
-import { consumePendingReplayId } from "../obs/client.js";
 import { maybeRunCinematicSequence, recordRoundEnd } from "../cinematic/scheduler.js";
 import { maybeAutoSwitch, resetAutoSwitchState } from "../observer/auto-switch.js";
 import { broadcast } from "../ws/hub.js";
-import { emitLhmGsiUpdate } from "../lhm/socket.js";
 import { db } from "../db/client.js";
 
 let latestPayload: GsiPayload | null = null;
@@ -39,10 +36,9 @@ function persistLatestPayload(payload: GsiPayload): void {
  * number aren't changing tick to tick (confirmed live: a real payload with
  * provider/player/allplayers/bomb/phase_countdowns but no "map" at all).
  * Treating each POST as the complete state (a plain overwrite) meant
- * latestPayload — and everything fed from it, including the LHM HUD relay,
- * whose csgogsi digest() hard-requires map/allplayers/phase_countdowns —
- * would intermittently go stale or blank. Merge instead: keep the last
- * known value for any section this POST didn't include.
+ * latestPayload — and everything fed from it — would intermittently go
+ * stale or blank. Merge instead: keep the last known value for any section
+ * this POST didn't include.
  */
 function mergeGsiPayload(previous: GsiPayload | null, incoming: GsiPayload): GsiPayload {
   if (!previous) return incoming;
@@ -61,7 +57,8 @@ function mergeGsiPayload(previous: GsiPayload | null, incoming: GsiPayload): Gsi
  * CS2 POSTs its GSI JSON body here on every state change (see the .cfg
  * written by gsi/cfg-generator.ts). Each payload is diffed against the
  * previous one, normalized into internal events, and fanned out over the
- * WS hub to the HUD/admin/minimap clients.
+ * WS hub to the admin panel, plus drives the Smart Auto Observer and
+ * cinematic freezetime cameras.
  */
 export function registerGsiListener(app: FastifyInstance): void {
   hydrateLatestPayload();
@@ -73,25 +70,12 @@ export function registerGsiListener(app: FastifyInstance): void {
     latestPayload = payload;
     lastUpdatedAt = Date.now();
     persistLatestPayload(payload);
-    emitLhmGsiUpdate(payload);
 
     const events = normalizeGsiPayload(payload, previous);
     for (const event of events) {
       broadcast({ kind: "gsi_event", event });
 
-      // Section 8: a replay saved mid-round is shown fullscreen at the
-      // start of the next freezetime, matching how a real broadcast would
-      // slot it in without interrupting live play.
       if (event.type === "freezetime_start") {
-        const replayId = consumePendingReplayId();
-        if (replayId) {
-          broadcast({
-            kind: "replay_show",
-            fileUrl: `/api/obs/replay-file/${replayId}`,
-            volume: readObsConfig().volume,
-          });
-        }
-
         maybeRunCinematicSequence(payload.map?.name, readHudSettings().cinematicFreezetimeShotsEnabled);
       }
 

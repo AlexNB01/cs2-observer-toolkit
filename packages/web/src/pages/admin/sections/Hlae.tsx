@@ -55,11 +55,18 @@ export function Hlae() {
   if (!settings) return <p>Loading…</p>;
 
   return (
-    <Card title="HLAE integration" description="Spec section 12 — advanced visuals via a third-party program that modifies the game.">
+    <Card title="HLAE integration" description="Advanced visuals via a third-party program that modifies the game.">
       <div style={{ background: "rgba(224,90,90,0.1)", border: "1px solid var(--danger)", borderRadius: 6, padding: 12, marginBottom: 16 }}>
         HLAE modifies the game client. Only launch it if you trust the server you're about to join.{" "}
         <a href="https://www.hlae.online/" target="_blank" rel="noreferrer">HLAE FAQ</a>
       </div>
+
+      <Row label="CT color">
+        <input type="color" value={settings.hlaeCtColor} onChange={(e) => update({ hlaeCtColor: e.target.value })} />
+      </Row>
+      <Row label="T color">
+        <input type="color" value={settings.hlaeTColor} onChange={(e) => update({ hlaeTColor: e.target.value })} />
+      </Row>
 
       <p>
         HLAE.exe: <StatusBadge ok={Boolean(status?.hlaeConfigured)} okLabel="Configured" badLabel="Set HLAE_EXE_PATH in server/.env" />{" "}

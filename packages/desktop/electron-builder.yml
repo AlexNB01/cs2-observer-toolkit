@@ -18,8 +18,6 @@ files:
 extraResources:
   - from: ../web/dist
     to: web-dist
-  - from: ../../lhm-hud/build
-    to: lhm-hud-dist
 
 win:
   target: nsis

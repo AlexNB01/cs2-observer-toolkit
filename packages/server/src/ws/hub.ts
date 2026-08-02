@@ -6,10 +6,8 @@ import type { ClientToServerMessage, ServerToClientMessage } from "@cs2hud/share
 const clients = new Set<WebSocket>();
 
 /**
- * Single WS endpoint shared by the admin panel, the HUD, the minimap view,
- * and the veto view. Clients announce their role via an "identify" message;
- * for now every client receives every broadcast (fan-out), since payload
- * volume is low (GSI events + settings pushes).
+ * Single WS endpoint used by the admin panel to receive GSI events,
+ * settings pushes, observer queue updates, and cinematic cues.
  */
 export function registerWsHub(app: FastifyInstance): void {
   app.get("/ws", { websocket: true }, (socket: WebSocket) => {
@@ -18,8 +16,9 @@ export function registerWsHub(app: FastifyInstance): void {
 
     socket.on("message", (raw: Buffer) => {
       try {
-        const message = JSON.parse(raw.toString()) as ClientToServerMessage;
-        handleClientMessage(message);
+        JSON.parse(raw.toString()) as ClientToServerMessage;
+        // "identify" doesn't need handling — every client gets every
+        // broadcast (fan-out), since payload volume is low.
       } catch {
         // ignore malformed frames
       }
@@ -29,17 +28,6 @@ export function registerWsHub(app: FastifyInstance): void {
       clients.delete(socket);
     });
   });
-}
-
-function handleClientMessage(message: ClientToServerMessage): void {
-  // "identify" doesn't need handling yet — every client gets every
-  // broadcast regardless of role (see the fan-out note above).
-  if (message.kind === "trigger_preview") {
-    broadcast({ kind: "preview_triggered", preview: message.preview });
-  }
-  if (message.kind === "open_hud_overlay") {
-    broadcast({ kind: "hud_overlay_requested" });
-  }
 }
 
 function send(socket: WebSocket, message: ServerToClientMessage): void {

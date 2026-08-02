@@ -19,6 +19,19 @@ import type { GsiPayload, NormalizedEvent } from "@cs2hud/shared";
  *    just doesn't carry enough information to do better than that.
  *  - `position` is only present for the observed player unless
  *    allplayers_position is requested, and even then can lag a tick.
+ *  - `round.phase` (and the whole "map" section alongside it, including
+ *    the visible score) can stop being resent by CS2 mid-match for
+ *    extended stretches — confirmed live: several real round transitions
+ *    with zero "map"/"round" sections in the raw POSTs the whole time,
+ *    while every other section (player/allplayers/bomb/phase_countdowns)
+ *    kept updating normally. `phase_countdowns.phase` carries the same
+ *    freezetime/live/over vocabulary and was reliable throughout that
+ *    outage, so round-transition detection below prefers it over
+ *    round.phase. This doesn't recover the visible score (that number
+ *    only exists in the "map" section — there's no other source for it),
+ *    but it keeps round_start/round_end firing correctly for everything
+ *    downstream that depends on them (ADR, cinematic cues, Smart Observer
+ *    state resets) even during a "map" outage.
  */
 export function normalizeGsiPayload(current: GsiPayload, previous: GsiPayload | null): NormalizedEvent[] {
   const events: NormalizedEvent[] = [];
@@ -31,8 +44,8 @@ export function normalizeGsiPayload(current: GsiPayload, previous: GsiPayload | 
     return events;
   }
 
-  const prevPhase = previous.round?.phase;
-  const currPhase = current.round?.phase;
+  const prevPhase = previous.phase_countdowns?.phase ?? previous.round?.phase;
+  const currPhase = current.phase_countdowns?.phase ?? current.round?.phase;
   if (currPhase && currPhase !== prevPhase) {
     if (currPhase === "freezetime") {
       events.push({ type: "freezetime_start", timestamp });

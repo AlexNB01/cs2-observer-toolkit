@@ -4,7 +4,7 @@ import { readHudSettings, writeHudSettings } from "../db/hud-settings-store.js";
 import { broadcast } from "../ws/hub.js";
 
 export function registerHudSettingsRoutes(app: FastifyInstance): void {
-  // Backs sections 2, 3, 5, 9 and 13 — all HUD/observer/minimap/veto toggles
+  // Backs Smart Auto Observer, cinematic cameras, and HLAE toggles — all
   // live in one settings object pushed to every client over WS on change.
   app.get("/api/hud-settings", async () => readHudSettings());
 

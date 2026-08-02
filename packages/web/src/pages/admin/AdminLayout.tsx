@@ -3,27 +3,10 @@ import { NavLink, Outlet } from "react-router-dom";
 const NAV_GROUPS: { label: string; items: { to: string; label: string }[] }[] = [
   { label: "Setup", items: [{ to: "setup", label: "GSI Setup" }] },
   {
-    label: "HUD",
-    items: [
-      { to: "hud-display", label: "HUD" },
-      { to: "minimap", label: "MiniMap" },
-    ],
-  },
-  {
     label: "Producing",
     items: [
       { to: "observer", label: "Smart Auto Observer" },
-      { to: "stats", label: "Player stats" },
-      { to: "obs", label: "OBS replay" },
       { to: "hlae", label: "HLAE" },
-      { to: "veto", label: "Veto / map pick" },
-    ],
-  },
-  {
-    label: "Roster",
-    items: [
-      { to: "players", label: "Players" },
-      { to: "teams", label: "Teams" },
     ],
   },
 ];

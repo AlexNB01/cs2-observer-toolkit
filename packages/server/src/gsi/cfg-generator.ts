@@ -31,6 +31,7 @@ export function generateGsiCfg(port: number): string {
     "allplayers_weapons"      "1"
     "bomb"                    "1"
     "phase_countdowns"        "1"
+    "allgrenades"             "1"
   }
 }
 `;
