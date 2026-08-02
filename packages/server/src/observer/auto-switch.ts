@@ -3,6 +3,7 @@ import { specPlayerByName } from "./netconsole.js";
 
 let currentSteamId: string | null = null;
 let lastSwitchAt = 0;
+let suppressUntil = 0;
 
 // Requiring a clear margin (not just "any higher number") and a minimum
 // dwell time between switches is what actually fixes chaotic switching —
@@ -15,6 +16,19 @@ const MIN_DWELL_MS = 2_000;
 export function resetAutoSwitchState(): void {
   currentSteamId = null;
   lastSwitchAt = 0;
+}
+
+/**
+ * Blocks maybeAutoSwitch until the given timestamp — used by
+ * cinematic/scheduler.ts while a cinematic shot is on screen, so a duel
+ * elsewhere can't fight it for camera control mid-display. Without this, a
+ * cinematic shot triggered during a *live* round (bomb plant, quiet
+ * moment) could get yanked away the very next tick if someone else scores
+ * — freezetime-only shots never hit this in practice since nothing scores
+ * during freezetime, but it was always a latent gap.
+ */
+export function suppressAutoSwitchUntil(untilMs: number): void {
+  suppressUntil = untilMs;
 }
 
 /**
@@ -41,6 +55,7 @@ export function resetAutoSwitchState(): void {
  */
 export async function maybeAutoSwitch(enabled: boolean): Promise<void> {
   if (!enabled) return;
+  if (Date.now() < suppressUntil) return;
 
   const ranked = getObserverQueue();
   const top = ranked[0];

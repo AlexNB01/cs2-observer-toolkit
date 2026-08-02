@@ -3,7 +3,7 @@ import type { GsiPayload } from "@cs2hud/shared";
 import { normalizeGsiPayload } from "./normalizer.js";
 import { processObserverEvents } from "./observer.js";
 import { readHudSettings } from "../db/hud-settings-store.js";
-import { maybeRunCinematicSequence, recordRoundEnd } from "../cinematic/scheduler.js";
+import { maybeRunCinematicSequence, maybeShowBombPlantShot, maybeShowQuietMomentShot, recordRoundEnd } from "../cinematic/scheduler.js";
 import { maybeAutoSwitch, resetAutoSwitchState } from "../observer/auto-switch.js";
 import { broadcast } from "../ws/hub.js";
 import { db } from "../db/client.js";
@@ -71,12 +71,17 @@ export function registerGsiListener(app: FastifyInstance): void {
     lastUpdatedAt = Date.now();
     persistLatestPayload(payload);
 
+    const settings = readHudSettings();
     const events = normalizeGsiPayload(payload, previous);
     for (const event of events) {
       broadcast({ kind: "gsi_event", event });
 
       if (event.type === "freezetime_start") {
-        maybeRunCinematicSequence(payload.map?.name, readHudSettings().cinematicFreezetimeShotsEnabled);
+        maybeRunCinematicSequence(payload.map?.name, payload.map?.round, settings.cinematicFreezetimeShotsEnabled);
+      }
+
+      if (event.type === "bomb_planted") {
+        maybeShowBombPlantShot(payload.map?.name, payload.bomb?.position, settings.cinematicBombPlantShotsEnabled);
       }
 
       if (event.type === "round_end") {
@@ -88,8 +93,8 @@ export function registerGsiListener(app: FastifyInstance): void {
       }
     }
 
-    const settings = readHudSettings();
     processObserverEvents(events, payload, settings.smartObserverEnabled);
+    maybeShowQuietMomentShot(payload, settings.cinematicQuietMomentShotsEnabled);
 
     if (settings.smartObserverEnabled && settings.autoSwitchInsideCs2) {
       void maybeAutoSwitch(true).catch(() => {});

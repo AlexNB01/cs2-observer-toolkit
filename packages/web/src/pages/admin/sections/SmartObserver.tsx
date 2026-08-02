@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import type { CinematicMapCameras, ObserverQueueItem } from "@cs2hud/shared";
+import type { CinematicShot, ObserverQueueItem } from "@cs2hud/shared";
 import { RADAR_CALIBRATION } from "@cs2hud/shared";
 import { Card, Row, Toggle } from "../../../components/ui.js";
 import { useHudSettings } from "../../../lib/useHudSettings.js";
@@ -21,10 +21,22 @@ const EVENT_LABEL: Record<ObserverQueueItem["eventType"], string> = {
   UTILITY: "Grenade incoming",
 };
 
+const SLOT_LABEL: Record<CinematicShot["slot"], string> = {
+  ct: "CT spawn (freezetime)",
+  t: "T spawn (freezetime)",
+  poi: "Point of interest (bomb plant / quiet moment)",
+};
+
+const TRIGGER_LABEL: Record<"freezetime" | "bomb_plant" | "quiet_moment", string> = {
+  freezetime: "Freezetime",
+  bomb_plant: "Bomb plant",
+  quiet_moment: "Quiet moment",
+};
+
 const MAPS = Object.keys(RADAR_CALIBRATION).sort();
 
-function shotToText(shot: { x: number; y: number; z: number; pitch: number; yaw: number } | null): string {
-  return shot ? `${shot.x} ${shot.y} ${shot.z} ${shot.pitch} ${shot.yaw}` : "";
+function shotToText(shot: { x: number; y: number; z: number; pitch: number; yaw: number }): string {
+  return `${shot.x} ${shot.y} ${shot.z} ${shot.pitch} ${shot.yaw}`;
 }
 
 function parseShot(text: string): { x: number; y: number; z: number; pitch: number; yaw: number } | null {
@@ -37,10 +49,12 @@ function parseShot(text: string): { x: number; y: number; z: number; pitch: numb
 export function SmartObserver() {
   const { settings, update } = useHudSettings();
   const [queue, setQueue] = useState<ObserverQueueItem[]>([]);
-  const [cameras, setCameras] = useState<CinematicMapCameras[]>([]);
+  const [allShots, setAllShots] = useState<CinematicShot[]>([]);
   const [selectedMap, setSelectedMap] = useState(MAPS[0] ?? "de_mirage");
-  const [ctText, setCtText] = useState("");
-  const [tText, setTText] = useState("");
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [labelText, setLabelText] = useState("");
+  const [slot, setSlot] = useState<CinematicShot["slot"]>("ct");
+  const [coordsText, setCoordsText] = useState("");
   const [cinematicMessage, setCinematicMessage] = useState<string | null>(null);
   const [cinematicCfg, setCinematicCfg] = useState<string | null>(null);
   const [lastCue, setLastCue] = useState<string | null>(null);
@@ -59,39 +73,62 @@ export function SmartObserver() {
     return () => clearInterval(poll);
   }, []);
 
-  function reloadCameras() {
-    api.get<CinematicMapCameras[]>("/cinematic/cameras").then(setCameras).catch(console.error);
+  function reloadShots() {
+    api.get<CinematicShot[]>("/cinematic/shots").then(setAllShots).catch(console.error);
   }
-  useEffect(reloadCameras, []);
-
-  useEffect(() => {
-    const existing = cameras.find((c) => c.mapName === selectedMap);
-    setCtText(shotToText(existing?.ctShot ?? null));
-    setTText(shotToText(existing?.tShot ?? null));
-  }, [selectedMap, cameras]);
+  useEffect(reloadShots, []);
 
   useHudSocket((message) => {
     if (message.kind === "observer_queue_updated") setQueue(message.queue);
     if (message.kind === "cinematic_cue") {
       setLastCue(
         message.autoTriggered
-          ? `${message.side.toUpperCase()} shot — camera moved automatically`
-          : `${message.side.toUpperCase()} shot — netconsole not connected, run "${message.execCommand}" yourself (or bind it to a key)`
+          ? `${TRIGGER_LABEL[message.trigger]}: ${message.label} — camera moved automatically`
+          : `${TRIGGER_LABEL[message.trigger]}: ${message.label} — netconsole not connected, run "${message.execCommand}" yourself (or bind it to a key)`
       );
     }
   });
 
-  async function saveCameras() {
+  function resetForm() {
+    setEditingId(null);
+    setLabelText("");
+    setSlot("ct");
+    setCoordsText("");
+  }
+
+  function startEdit(s: CinematicShot) {
+    setEditingId(s.id);
+    setLabelText(s.label);
+    setSlot(s.slot);
+    setCoordsText(shotToText(s.shot));
+  }
+
+  async function saveShot() {
     setCinematicMessage(null);
-    const ctShot = ctText.trim() ? parseShot(ctText) : null;
-    const tShot = tText.trim() ? parseShot(tText) : null;
-    if ((ctText.trim() && !ctShot) || (tText.trim() && !tShot)) {
+    if (!labelText.trim()) {
+      setCinematicMessage("Label is required.");
+      return;
+    }
+    const shot = parseShot(coordsText);
+    if (!shot) {
       setCinematicMessage('Expected 5 numbers: "x y z pitch yaw"');
       return;
     }
-    await api.put(`/cinematic/cameras/${selectedMap}`, { ctShot, tShot });
-    setCinematicMessage(`Saved ${selectedMap}.`);
-    reloadCameras();
+    const body = { mapName: selectedMap, label: labelText.trim(), slot, shot };
+    if (editingId) {
+      await api.put(`/cinematic/shots/${editingId}`, body);
+    } else {
+      await api.post("/cinematic/shots", body);
+    }
+    setCinematicMessage(`Saved "${body.label}".`);
+    resetForm();
+    reloadShots();
+  }
+
+  async function deleteShot(id: string) {
+    await api.del(`/cinematic/shots/${id}`);
+    if (editingId === id) resetForm();
+    reloadShots();
   }
 
   async function previewCfg() {
@@ -106,7 +143,7 @@ export function SmartObserver() {
   async function installCfg() {
     try {
       const result = await api.post<{ path: string }>("/cinematic/cfg/install", { map: selectedMap });
-      setCinematicMessage(`cinematic.cfg written to ${result.path}. Bind cinematic_ct / cinematic_t to keys, or run "exec cinematic" then the alias.`);
+      setCinematicMessage(`cinematic.cfg written to ${result.path}. Bind the printed aliases to keys as a manual fallback.`);
     } catch (e) {
       setCinematicMessage((e as Error).message);
     }
@@ -114,7 +151,12 @@ export function SmartObserver() {
 
   if (!settings) return <p>Loading…</p>;
 
-  const capturedCount = cameras.filter((c) => c.ctShot && c.tShot).length;
+  const shotsForMap = allShots.filter((s) => s.mapName === selectedMap);
+  const mapReady = (m: string) => {
+    const shots = allShots.filter((s) => s.mapName === m);
+    return shots.some((s) => s.slot === "ct") && shots.some((s) => s.slot === "t");
+  };
+  const readyCount = MAPS.filter(mapReady).length;
 
   return (
     <>
@@ -166,36 +208,69 @@ export function SmartObserver() {
       </Card>
 
       <Card
-        title="Cinematic freezetime cameras"
-        description={`Two fixed shots (winner's side first) shown before handing back to the Smart Observer. ${capturedCount}/${MAPS.length} maps captured.`}
+        title="Cinematic camera shots"
+        description={`${readyCount}/${MAPS.length} maps have both a CT and T freezetime shot captured.`}
       >
-        <Row label="Cinematic shots during freezetime">
+        <Row label="Freezetime shots" hint="Winner's side first, rotates through however many CT/T shots you've captured for the map">
           <Toggle checked={settings.cinematicFreezetimeShotsEnabled} onChange={(v) => update({ cinematicFreezetimeShotsEnabled: v })} />
+        </Row>
+        <Row label="Bomb plant shots" hint="On plant, cuts to whichever captured shot (any type) is nearest the plant">
+          <Toggle checked={settings.cinematicBombPlantShotsEnabled} onChange={(v) => update({ cinematicBombPlantShotsEnabled: v })} />
+        </Row>
+        <Row label="Quiet-moment filler shots" hint="Cuts briefly to a point-of-interest shot (e.g. mid) when players are near it and nothing else is happening">
+          <Toggle checked={settings.cinematicQuietMomentShotsEnabled} onChange={(v) => update({ cinematicQuietMomentShotsEnabled: v })} />
         </Row>
 
         <p style={{ color: "var(--muted)", fontSize: 12 }}>
-          There's no way to guess good camera spots without being in the map. In CS2: <code>spec_mode 6</code>, fly to a spot with a good
-          view of T spawn / CT spawn, run <code>spec_pos</code>, and paste the printed x/y/z/pitch/yaw below.
+          There's no way to guess good camera spots without being in the map. In CS2: <code>spec_mode 6</code>, fly to a spot, run{" "}
+          <code>spec_pos</code>, and paste the printed x/y/z/pitch/yaw below. Capture as many as you want per map — CT/T spawn shots
+          rotate at freezetime, everything else (bomb sites, mid, ...) is a "point of interest" shown mid-round.
         </p>
 
         <Row label="Map">
-          <select value={selectedMap} onChange={(e) => setSelectedMap(e.target.value)}>
+          <select value={selectedMap} onChange={(e) => { setSelectedMap(e.target.value); resetForm(); }}>
             {MAPS.map((m) => (
               <option key={m} value={m}>
-                {m} {cameras.find((c) => c.mapName === m)?.ctShot && cameras.find((c) => c.mapName === m)?.tShot ? "✓" : ""}
+                {m} {mapReady(m) ? "✓" : ""}
               </option>
             ))}
           </select>
         </Row>
-        <Row label="CT shot" hint="x y z pitch yaw">
-          <input type="text" placeholder="e.g. -500 1200 150 -5 90" value={ctText} onChange={(e) => setCtText(e.target.value)} />
+
+        {shotsForMap.length === 0 ? (
+          <p className="empty-state">No shots captured for {selectedMap} yet.</p>
+        ) : (
+          shotsForMap.map((s) => (
+            <div className="list-item" key={s.id}>
+              <span>
+                {s.label} <small style={{ color: "var(--muted)" }}>({SLOT_LABEL[s.slot]})</small>
+              </span>
+              <span>
+                <button className="secondary" onClick={() => startEdit(s)}>Edit</button>{" "}
+                <button className="secondary" onClick={() => deleteShot(s.id)}>Delete</button>
+              </span>
+            </div>
+          ))
+        )}
+
+        <h3 style={{ fontSize: 13, color: "var(--muted)", margin: "16px 0 4px" }}>{editingId ? "Edit shot" : "Add shot"}</h3>
+        <Row label="Label" hint='e.g. "CT spawn", "Mid", "Bombsite A"'>
+          <input type="text" value={labelText} onChange={(e) => setLabelText(e.target.value)} />
         </Row>
-        <Row label="T shot" hint="x y z pitch yaw">
-          <input type="text" placeholder="e.g. 800 -300 100 -8 -120" value={tText} onChange={(e) => setTText(e.target.value)} />
+        <Row label="Type">
+          <select value={slot} onChange={(e) => setSlot(e.target.value as CinematicShot["slot"])}>
+            <option value="ct">CT spawn (freezetime)</option>
+            <option value="t">T spawn (freezetime)</option>
+            <option value="poi">Point of interest (bomb plant / quiet moment)</option>
+          </select>
+        </Row>
+        <Row label="Coordinates" hint="x y z pitch yaw">
+          <input type="text" placeholder="e.g. -500 1200 150 -5 90" value={coordsText} onChange={(e) => setCoordsText(e.target.value)} />
         </Row>
 
         <div style={{ display: "flex", gap: 8, marginTop: 8 }}>
-          <button onClick={saveCameras}>Save</button>
+          <button onClick={saveShot}>{editingId ? "Save changes" : "Add shot"}</button>
+          {editingId && <button className="secondary" onClick={resetForm}>Cancel</button>}
           <button className="secondary" onClick={previewCfg}>Preview cfg</button>
           <button className="secondary" onClick={installCfg}>Install cinematic.cfg</button>
         </div>

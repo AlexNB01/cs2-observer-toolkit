@@ -6,6 +6,10 @@ export interface HudSettings {
   /** Must match CS2's "-netconport <port>" launch option — see observer/netconsole.ts. */
   cs2NetconsolePort: number;
   cinematicFreezetimeShotsEnabled: boolean;
+  /** On bomb_planted, show whichever captured shot is nearest the plant. */
+  cinematicBombPlantShotsEnabled: boolean;
+  /** Opportunistic filler: cut to a "poi" shot when players are near it and nothing else is happening. */
+  cinematicQuietMomentShotsEnabled: boolean;
 
   // HLAE
   hlaeKillfeedEnabled: boolean;
@@ -43,7 +47,7 @@ export interface ObserverQueueItem {
 }
 
 /**
- * Cinematic freezetime shots. Captured by the user in-game (spec_mode 6,
+ * A cinematic camera position. Captured by the user in-game (spec_mode 6,
  * walk the free camera to a spot, run `spec_pos`, copy the printed
  * x/y/z/pitch/yaw here) — there's no way to derive these without being in
  * the map, so they're not pre-filled for any map.
@@ -56,9 +60,19 @@ export interface CinematicCameraShot {
   yaw: number;
 }
 
-export interface CinematicMapCameras {
+/**
+ * A single named camera spot captured for a map. Any number can be
+ * captured per map. `slot` decides how it's used: "ct"/"t" shots rotate
+ * through at freezetime start (winner's side first, see
+ * cinematic/scheduler.ts); "poi" ("point of interest" — mid, a bombsite,
+ * anywhere else) shots are only ever shown via the bomb-plant or
+ * quiet-moment triggers, never at freezetime.
+ */
+export interface CinematicShot {
+  id: string;
   mapName: string;
-  ctShot: CinematicCameraShot | null;
-  tShot: CinematicCameraShot | null;
+  label: string;
+  slot: "ct" | "t" | "poi";
+  shot: CinematicCameraShot;
   updatedAt: string;
 }

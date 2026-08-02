@@ -6,6 +6,8 @@ export const DEFAULT_HUD_SETTINGS: Omit<HudSettings, "updatedAt"> = {
   autoSwitchInsideCs2: false,
   cs2NetconsolePort: 2121,
   cinematicFreezetimeShotsEnabled: false,
+  cinematicBombPlantShotsEnabled: false,
+  cinematicQuietMomentShotsEnabled: false,
 
   hlaeKillfeedEnabled: false,
   hlaeXrayEnabled: false,
@@ -23,10 +25,12 @@ export function migrate(): void {
       json TEXT NOT NULL
     );
 
-    CREATE TABLE IF NOT EXISTS cinematic_cameras (
-      map_name TEXT PRIMARY KEY,
-      ct_x REAL, ct_y REAL, ct_z REAL, ct_pitch REAL, ct_yaw REAL,
-      t_x REAL, t_y REAL, t_z REAL, t_pitch REAL, t_yaw REAL,
+    CREATE TABLE IF NOT EXISTS cinematic_shots (
+      id TEXT PRIMARY KEY,
+      map_name TEXT NOT NULL,
+      label TEXT NOT NULL,
+      slot TEXT NOT NULL CHECK (slot IN ('ct', 't', 'poi')),
+      x REAL NOT NULL, y REAL NOT NULL, z REAL NOT NULL, pitch REAL NOT NULL, yaw REAL NOT NULL,
       updated_at TEXT NOT NULL
     );
 
