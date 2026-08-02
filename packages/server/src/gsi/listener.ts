@@ -80,7 +80,7 @@ export function registerGsiListener(app: FastifyInstance): void {
         maybeRunCinematicSequence(payload.map?.name, payload.map?.round, settings.cinematicFreezetimeShotsEnabled);
       }
 
-      if (event.type === "bomb_planted") {
+      if (event.type === "bomb_planting") {
         maybeShowBombPlantShot(payload.map?.name, payload.bomb?.position, settings.cinematicBombPlantShotsEnabled);
       }
 

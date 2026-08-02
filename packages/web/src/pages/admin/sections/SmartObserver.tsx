@@ -11,7 +11,7 @@ const EVENT_LABEL: Record<ObserverQueueItem["eventType"], string> = {
   TRADE: "Trade",
   MULTI_KILL: "Multi-kill",
   DUEL: "Duel",
-  BOMB: "Bomb plant/defuse",
+  BOMB: "Defusing",
   ENGAGING: "Engaging",
   PROXIMITY: "Close proximity",
   BURNING: "On fire",
@@ -214,7 +214,7 @@ export function SmartObserver() {
         <Row label="Freezetime shots" hint="Winner's side first, rotates through however many CT/T shots you've captured for the map">
           <Toggle checked={settings.cinematicFreezetimeShotsEnabled} onChange={(v) => update({ cinematicFreezetimeShotsEnabled: v })} />
         </Row>
-        <Row label="Bomb plant shots" hint="On plant, cuts to whichever captured shot (any type) is nearest the plant">
+        <Row label="Bomb plant shots" hint="As planting starts, cuts to whichever captured shot (any type) is nearest the plant">
           <Toggle checked={settings.cinematicBombPlantShotsEnabled} onChange={(v) => update({ cinematicBombPlantShotsEnabled: v })} />
         </Row>
         <Row label="Quiet-moment filler shots" hint="Cuts briefly to a point-of-interest shot (e.g. mid) when players are near it and nothing else is happening">

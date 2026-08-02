@@ -11,7 +11,7 @@ const BOMB_PLANT_SHOT_DURATION_MS = 4000;
 const BOMB_PLANT_MAX_DISTANCE_UNITS = 1500; // skip if no captured shot is anywhere near the plant
 const QUIET_MOMENT_SHOT_DURATION_MS = 4000;
 const QUIET_MOMENT_COOLDOWN_MS = 45_000; // shared across all three triggers, so filler shots don't stack right after a real one
-const QUIET_SCORE_THRESHOLD = 20; // below even a single ENGAGING contribution (gsi/observer.ts) counts as "nothing happening"
+const QUIET_SCORE_THRESHOLD = 30; // ambient proximity/decaying-engaging routinely sits in the 20s even when nothing's actually happening — 20 almost never triggered
 const QUIET_PRESENCE_RADIUS_UNITS = 700;
 
 let lastRoundWinner: "CT" | "T" | null = null;
@@ -108,7 +108,12 @@ export function maybeRunCinematicSequence(mapName: string | undefined, roundNumb
   setTimeout(handBackToObserver, order.length * SHOT_GAP_MS);
 }
 
-/** Called on bomb_planted — cuts to whichever captured shot (any slot) is nearest the plant, then hands back. */
+/**
+ * Called on bomb_planting (the plant *starting*, not finishing — the ~3s
+ * plant animation itself is the moment worth cutting to an establishing
+ * shot for, not just the aftermath) — cuts to whichever captured shot (any
+ * slot) is nearest the plant, then hands back.
+ */
 export function maybeShowBombPlantShot(mapName: string | undefined, bombPosition: string | undefined, enabled: boolean): void {
   if (!enabled || !mapName) return;
 

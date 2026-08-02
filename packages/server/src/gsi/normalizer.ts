@@ -59,6 +59,7 @@ export function normalizeGsiPayload(current: GsiPayload, previous: GsiPayload | 
   const prevBomb = previous.bomb?.state;
   const currBomb = current.bomb?.state;
   if (currBomb && currBomb !== prevBomb) {
+    if (currBomb === "planting") events.push({ type: "bomb_planting", timestamp, playerSteamId: current.bomb?.player });
     if (currBomb === "planted") events.push({ type: "bomb_planted", timestamp, playerSteamId: current.bomb?.player });
     if (currBomb === "defused") events.push({ type: "bomb_defused", timestamp, playerSteamId: current.bomb?.player });
     if (currBomb === "exploded") events.push({ type: "bomb_exploded", timestamp });
