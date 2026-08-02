@@ -25,7 +25,19 @@ export interface ObserverQueueItem {
   playerSteamId: string;
   playerName: string;
   side: "T" | "CT";
-  eventType: "TRADE" | "DUEL" | "CLUTCH" | "MULTI_KILL" | "BOMB" | "ENGAGING" | "PROXIMITY" | "BURNING" | "LOW_HP" | "BOMB_STACK" | "CT_STACK";
+  eventType:
+    | "TRADE"
+    | "DUEL"
+    | "CLUTCH"
+    | "MULTI_KILL"
+    | "BOMB"
+    | "ENGAGING"
+    | "PROXIMITY"
+    | "BURNING"
+    | "LOW_HP"
+    | "BOMB_STACK"
+    | "CT_STACK"
+    | "UTILITY";
   priority: number;
   createdAt: string;
 }

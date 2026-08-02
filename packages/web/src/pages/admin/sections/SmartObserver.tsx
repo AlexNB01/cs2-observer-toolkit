@@ -18,6 +18,7 @@ const EVENT_LABEL: Record<ObserverQueueItem["eventType"], string> = {
   LOW_HP: "Low HP",
   BOMB_STACK: "Stacked with bomb",
   CT_STACK: "CT rotate/stack",
+  UTILITY: "Grenade incoming",
 };
 
 const MAPS = Object.keys(RADAR_CALIBRATION).sort();

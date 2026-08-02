@@ -68,6 +68,30 @@ export interface GsiPlayer {
   weapons?: Record<string, GsiWeapon>; // keyed "weapon_0", "weapon_1", ... — only present if allplayers_weapons is subscribed
 }
 
+/**
+ * Raw shape confirmed against csgogsi's own GSI type definitions
+ * (github.com/osztenkurden/csgogsi, tsc/csgo.d.ts) — the client library the
+ * old vendored HUD used, since Valve's own GSI wiki doesn't document
+ * allgrenades in enough detail. `position`/`velocity` are absent on
+ * "inferno" (the burning-area aftermath of a molotov/incendiary, tracked
+ * only via `flames`) — everything else in flight has both.
+ */
+export interface GsiGrenadeBase {
+  owner: string; // steamid of whoever threw it
+  lifetime: string;
+}
+export interface GsiFlightGrenade extends GsiGrenadeBase {
+  position: string; // "x, y, z"
+  velocity: string;
+  type: "frag" | "firebomb" | "flashbang" | "decoy" | "smoke";
+  effecttime?: string; // present once a decoy/smoke's effect is active
+}
+export interface GsiInfernoGrenade extends GsiGrenadeBase {
+  type: "inferno";
+  flames: Record<string, string>;
+}
+export type GsiGrenade = GsiFlightGrenade | GsiInfernoGrenade;
+
 export interface GsiBomb {
   state: "planting" | "planted" | "defusing" | "defused" | "exploded" | "carried" | "dropped";
   position?: string;
@@ -86,13 +110,12 @@ export interface GsiPayload {
   phase_countdowns?: { phase: string; phase_ends_in: string };
   /**
    * Requires "allgrenades" "1" in the GSI cfg (see gsi/cfg-generator.ts) —
-   * without it CS2 never includes this key at all, which is what silently
-   * broke grenade rendering in the LHM HUD's minimap (lhm-hud/src/HUD/Radar)
-   * despite that rendering code itself being correct. We don't process this
-   * server-side ourselves — it's relayed through verbatim for the HUD's own
-   * client-side csgogsi digest() to parse. Keyed by grenade entity ID.
+   * without it CS2 never includes this key at all. Keyed by grenade entity
+   * ID. Consumed by gsi/observer.ts to anticipate an imminent duel (an
+   * in-flight flashbang/frag/firebomb heading toward someone) before any
+   * shot is actually fired.
    */
-  grenades?: Record<string, unknown>;
+  grenades?: Record<string, GsiGrenade>;
   previously?: unknown; // diff of the previous payload, shape mirrors the full payload
   added?: unknown; // keys newly present since the previous payload
 }
