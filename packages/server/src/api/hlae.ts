@@ -1,6 +1,5 @@
 import type { FastifyInstance } from "fastify";
 import { readHudSettings } from "../db/hud-settings-store.js";
-import { env } from "../config/env.js";
 import { generateSyncCfg, launchHlae, SYNC_CFG_FILENAME, writeSyncCfg } from "../hlae/client.js";
 
 /**
@@ -10,10 +9,13 @@ import { generateSyncCfg, launchHlae, SYNC_CFG_FILENAME, writeSyncCfg } from "..
  * configured CT/T colors — the user then runs `exec sync` in CS2.
  */
 export function registerHlaeRoutes(app: FastifyInstance): void {
-  app.get("/api/hlae/status", async () => ({
-    hlaeConfigured: Boolean(env.hlaeExePath),
-    cfgDirConfigured: Boolean(env.cs2CfgDir),
-  }));
+  app.get("/api/hlae/status", async () => {
+    const settings = readHudSettings();
+    return {
+      hlaeConfigured: Boolean(settings.hlaeExePath),
+      cfgDirConfigured: Boolean(settings.cs2CfgDir),
+    };
+  });
 
   app.post("/api/hlae/launch", async (_request, reply) => {
     try {
@@ -27,7 +29,7 @@ export function registerHlaeRoutes(app: FastifyInstance): void {
   app.get("/api/hlae/sync-cfg", async () => {
     const settings = readHudSettings();
     const content = generateSyncCfg({ ctColor: settings.hlaeCtColor, tColor: settings.hlaeTColor }, settings);
-    return { filename: SYNC_CFG_FILENAME, content, autoInstallConfigured: Boolean(env.cs2CfgDir) };
+    return { filename: SYNC_CFG_FILENAME, content, autoInstallConfigured: Boolean(settings.cs2CfgDir) };
   });
 
   app.post("/api/hlae/sync", async (_request, reply) => {

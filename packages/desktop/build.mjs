@@ -24,3 +24,20 @@ await build({
   sourcemap: true,
   logLevel: "info",
 });
+
+// Separate entry point: a sandboxed BrowserWindow's preload script runs in
+// its own isolated context and, unlike main.ts, Electron always loads it
+// as CommonJS regardless of the app's own "type": "module" — hence its own
+// build step with format: "cjs" rather than folding it into main.ts's ESM
+// bundle.
+await build({
+  entryPoints: [path.join(__dirname, "src/preload.ts")],
+  bundle: true,
+  platform: "node",
+  format: "cjs",
+  target: "node22",
+  outfile: path.join(__dirname, "dist/preload.js"),
+  external: ["electron"],
+  sourcemap: true,
+  logLevel: "info",
+});

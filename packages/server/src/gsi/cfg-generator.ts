@@ -1,6 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { env } from "../config/env.js";
+import { readHudSettings } from "../db/hud-settings-store.js";
 
 export const GSI_CFG_FILENAME = "gamestate_integration_cs2hud.cfg";
 
@@ -38,12 +39,11 @@ export function generateGsiCfg(port: number): string {
 }
 
 export function writeGsiCfg(): { path: string } {
-  if (!env.cs2CfgDir) {
-    throw new Error(
-      "CS2_CFG_DIR is not set. Point it at your CS2 install's game/csgo/cfg folder (see .env.example)."
-    );
+  const { cs2CfgDir } = readHudSettings();
+  if (!cs2CfgDir) {
+    throw new Error("CS2 cfg folder is not set. Set it on the GSI Setup page.");
   }
-  const targetPath = path.join(env.cs2CfgDir, GSI_CFG_FILENAME);
+  const targetPath = path.join(cs2CfgDir, GSI_CFG_FILENAME);
   fs.writeFileSync(targetPath, generateGsiCfg(env.httpPort), "utf-8");
   return { path: targetPath };
 }

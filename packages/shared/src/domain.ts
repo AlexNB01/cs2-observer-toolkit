@@ -1,5 +1,13 @@
 /** Settings singleton (one row) — Smart Auto Observer, cinematic cameras, HLAE. */
 export interface HudSettings {
+  // Paths (GSI Setup page) — editable live via "Browse..." in the desktop
+  // app or by pasting a path; previously only settable via a CS2_CFG_DIR/
+  // HLAE_EXE_PATH env var, which still seeds these on first run.
+  /** CS2's game/csgo/cfg folder — needed to auto-install the GSI/cinematic/sync .cfg files. */
+  cs2CfgDir: string;
+  /** Path to HLAE.exe (hlae.online) — not bundled/downloaded by this app. */
+  hlaeExePath: string;
+
   // Smart Auto Observer
   smartObserverEnabled: boolean;
   autoSwitchInsideCs2: boolean;

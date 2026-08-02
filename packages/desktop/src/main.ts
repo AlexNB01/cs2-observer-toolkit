@@ -2,7 +2,7 @@ import path from "node:path";
 import fs from "node:fs";
 import { fileURLToPath } from "node:url";
 import dotenv from "dotenv";
-import { app, BrowserWindow, Menu, Tray, shell, dialog } from "electron";
+import { app, BrowserWindow, Menu, Tray, shell, dialog, ipcMain } from "electron";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -23,8 +23,16 @@ const devEnvPath = path.join(__dirname, "..", "..", "server", ".env");
 const packagedEnvPath = path.join(app.getPath("userData"), ".env");
 const envPath = app.isPackaged ? packagedEnvPath : devEnvPath;
 
+// CS2_CFG_DIR/HLAE_EXE_PATH below are now just a one-time seed for a brand
+// new install — the GSI Setup and HLAE pages in the app itself are the
+// normal way to set (and change) these, with a native folder/file picker,
+// no restart needed. Editing this file still works too, but only until
+// the first time either path is set from within the app, at which point
+// the value saved there always wins.
 const ENV_TEMPLATE = `# CS2 Observer Toolkit configuration.
-# Point these at real paths, save, then restart the app from the tray icon.
+# You can set these here, but it's easier to use the GSI Setup and HLAE
+# pages inside the app itself — this file is only read once, on first
+# launch.
 
 # CS2 install's game/csgo/cfg folder, e.g.:
 # C:\\Program Files (x86)\\Steam\\steamapps\\common\\Counter-Strike Global Offensive\\game\\csgo\\cfg
@@ -57,6 +65,23 @@ process.env.PORT = process.env.PORT ?? "3001";
 
 const windowIconPath = path.join(__dirname, "..", "build", "icon.png");
 const trayIconPath = path.join(__dirname, "..", "build", "tray-icon.png");
+const preloadPath = path.join(__dirname, "preload.js");
+
+// Backs the admin panel's "Browse..." buttons for the CS2 cfg folder and
+// HLAE.exe path (see preload.ts) — a real native picker instead of asking
+// the user to type/paste an absolute path.
+ipcMain.handle("pick-folder", async () => {
+  const result = await dialog.showOpenDialog({ properties: ["openDirectory"] });
+  return result.canceled || result.filePaths.length === 0 ? null : result.filePaths[0];
+});
+
+ipcMain.handle("pick-file", async (_event, extensions: string[]) => {
+  const result = await dialog.showOpenDialog({
+    properties: ["openFile"],
+    filters: [{ name: "Executable", extensions }],
+  });
+  return result.canceled || result.filePaths.length === 0 ? null : result.filePaths[0];
+});
 
 let mainWindow: BrowserWindow | null = null;
 let tray: Tray | null = null;
@@ -81,6 +106,7 @@ function createWindow(port: number): void {
     webPreferences: {
       contextIsolation: true,
       sandbox: true,
+      preload: preloadPath,
     },
   });
 

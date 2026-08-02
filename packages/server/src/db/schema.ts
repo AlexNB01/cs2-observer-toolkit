@@ -1,7 +1,18 @@
 import type { HudSettings } from "@cs2hud/shared";
 import { db } from "./client.js";
+import { env } from "../config/env.js";
 
+// Read from CS2_CFG_DIR/HLAE_EXE_PATH once, at startup — this is only ever
+// a *default*: for a brand-new install it seeds the first row, and for an
+// existing install upgrading to this field, readHudSettings()'s merge
+// (`{...DEFAULT_HUD_SETTINGS, ...persisted}`) fills the gap transparently
+// so a working .env-based setup doesn't go blank. Once the user sets
+// either via the GSI Setup/HLAE pages, the persisted DB value always wins
+// from then on and this env fallback stops mattering.
 export const DEFAULT_HUD_SETTINGS: Omit<HudSettings, "updatedAt"> = {
+  cs2CfgDir: env.cs2CfgDir,
+  hlaeExePath: env.hlaeExePath,
+
   smartObserverEnabled: false,
   autoSwitchInsideCs2: false,
   cs2NetconsolePort: 2121,

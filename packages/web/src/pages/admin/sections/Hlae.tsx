@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { Card, Row, StatusBadge, Toggle } from "../../../components/ui.js";
 import { useHudSettings } from "../../../lib/useHudSettings.js";
 import { api } from "../../../lib/api-client.js";
+import { desktopBridge } from "../../../lib/desktop-bridge.js";
 
 interface HlaeStatus { hlaeConfigured: boolean; cfgDirConfigured: boolean }
 
@@ -18,10 +19,30 @@ export function Hlae() {
   const [status, setStatus] = useState<HlaeStatus | null>(null);
   const [message, setMessage] = useState<string | null>(null);
   const [cfgPreview, setCfgPreview] = useState<string | null>(null);
+  const [exePathText, setExePathText] = useState("");
+
+  function reloadStatus() {
+    api.get<HlaeStatus>("/hlae/status").then(setStatus).catch(console.error);
+  }
+
+  useEffect(reloadStatus, []);
 
   useEffect(() => {
-    api.get<HlaeStatus>("/hlae/status").then(setStatus).catch(console.error);
-  }, []);
+    if (settings) setExePathText(settings.hlaeExePath);
+  }, [settings?.hlaeExePath]);
+
+  async function saveExePath(exePath: string) {
+    await update({ hlaeExePath: exePath });
+    reloadStatus();
+  }
+
+  async function browseExePath() {
+    const file = await desktopBridge?.pickFile(["exe"]);
+    if (file) {
+      setExePathText(file);
+      await saveExePath(file);
+    }
+  }
 
   async function launch() {
     setMessage(null);
@@ -61,6 +82,27 @@ export function Hlae() {
         <a href="https://www.hlae.online/" target="_blank" rel="noreferrer">HLAE FAQ</a>
       </div>
 
+      <Row label="HLAE.exe path" hint="From https://www.hlae.online/ — not installed by this app">
+        <div style={{ display: "flex", gap: 8 }}>
+          <input
+            type="text"
+            value={exePathText}
+            onChange={(e) => setExePathText(e.target.value)}
+            onBlur={() => { if (exePathText !== settings.hlaeExePath) void saveExePath(exePathText.trim()); }}
+            placeholder="e.g. C:\HLAE\HLAE.exe"
+            style={{ flex: 1, minWidth: 280 }}
+          />
+          <button className="secondary" onClick={browseExePath} disabled={!desktopBridge}>
+            Browse…
+          </button>
+        </div>
+      </Row>
+      {!desktopBridge && (
+        <p style={{ color: "var(--muted)", fontSize: 12 }}>
+          Native file picker isn't available outside the desktop app — paste the path above instead.
+        </p>
+      )}
+
       <Row label="CT color">
         <input type="color" value={settings.hlaeCtColor} onChange={(e) => update({ hlaeCtColor: e.target.value })} />
       </Row>
@@ -69,8 +111,8 @@ export function Hlae() {
       </Row>
 
       <p>
-        HLAE.exe: <StatusBadge ok={Boolean(status?.hlaeConfigured)} okLabel="Configured" badLabel="Set HLAE_EXE_PATH in server/.env" />{" "}
-        CS2 cfg folder: <StatusBadge ok={Boolean(status?.cfgDirConfigured)} okLabel="Configured" badLabel="Set CS2_CFG_DIR in server/.env" />
+        HLAE.exe: <StatusBadge ok={Boolean(status?.hlaeConfigured)} okLabel="Configured" badLabel="Set the path above" />{" "}
+        CS2 cfg folder: <StatusBadge ok={Boolean(status?.cfgDirConfigured)} okLabel="Configured" badLabel="Set it on the GSI Setup page" />
       </p>
 
       <div style={{ display: "flex", gap: 8 }}>

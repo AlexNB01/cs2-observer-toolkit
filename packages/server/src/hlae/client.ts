@@ -2,7 +2,7 @@ import { spawn } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 import type { HudSettings } from "@cs2hud/shared";
-import { env } from "../config/env.js";
+import { readHudSettings } from "../db/hud-settings-store.js";
 
 export const SYNC_CFG_FILENAME = "sync.cfg";
 
@@ -56,10 +56,11 @@ export function generateSyncCfg(colors: Colors, toggles: HlaeToggles): string {
 }
 
 export function writeSyncCfg(content: string): { path: string } {
-  if (!env.cs2CfgDir) {
-    throw new Error("CS2_CFG_DIR is not set. Point it at your CS2 install's game/csgo/cfg folder (see .env.example).");
+  const { cs2CfgDir } = readHudSettings();
+  if (!cs2CfgDir) {
+    throw new Error("CS2 cfg folder is not set. Set it on the GSI Setup page.");
   }
-  const targetPath = path.join(env.cs2CfgDir, SYNC_CFG_FILENAME);
+  const targetPath = path.join(cs2CfgDir, SYNC_CFG_FILENAME);
   fs.writeFileSync(targetPath, content, "utf-8");
   return { path: targetPath };
 }
@@ -74,12 +75,13 @@ export function writeSyncCfg(content: string): { path: string } {
  * download/install HLAE ourselves — get it from https://www.hlae.online/.
  */
 export function launchHlae(): void {
-  if (!env.hlaeExePath) {
-    throw new Error("HLAE_EXE_PATH is not set. Download HLAE from https://www.hlae.online/ and point HLAE_EXE_PATH at HLAE.exe.");
+  const { hlaeExePath } = readHudSettings();
+  if (!hlaeExePath) {
+    throw new Error("HLAE.exe path is not set. Download HLAE from https://www.hlae.online/ and set the path on the HLAE page.");
   }
-  if (!fs.existsSync(env.hlaeExePath)) {
-    throw new Error(`HLAE_EXE_PATH points to a file that doesn't exist: ${env.hlaeExePath}`);
+  if (!fs.existsSync(hlaeExePath)) {
+    throw new Error(`HLAE.exe path points to a file that doesn't exist: ${hlaeExePath}`);
   }
-  const child = spawn(env.hlaeExePath, [], { detached: true, stdio: "ignore", cwd: path.dirname(env.hlaeExePath) });
+  const child = spawn(hlaeExePath, [], { detached: true, stdio: "ignore", cwd: path.dirname(hlaeExePath) });
   child.unref();
 }
