@@ -111,7 +111,12 @@ export function registerGsiListener(app: FastifyInstance): void {
 
     processObserverEvents(events, payload, settings.smartObserverEnabled);
     maybeRedirectToShooterDuringBombPlant(getLastTickShooters(), payload);
-    maybeShowQuietMomentShot(payload, settings.cinematicQuietMomentShotsEnabled);
+    // Quiet-moment filler shots are fully implemented but disabled for all
+    // users for now, regardless of their persisted setting — hard-coded
+    // false here rather than settings.cinematicQuietMomentShotsEnabled, and
+    // its toggle is hidden in the admin UI (see SmartObserver.tsx). Flip
+    // this back to the setting (and re-show the toggle) to bring it back.
+    maybeShowQuietMomentShot(payload, false);
 
     if (settings.smartObserverEnabled && settings.autoSwitchInsideCs2) {
       void maybeAutoSwitch(true).catch(() => {});

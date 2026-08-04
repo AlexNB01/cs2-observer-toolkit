@@ -4,10 +4,10 @@ A Windows desktop companion for casting/observing Counter-Strike 2 matches. It r
 live match state from CS2's Game State Integration (GSI) feed and uses it to:
 
 - **Automatically switch the spectator camera** to whoever's doing something interesting
-  (duels, clutches, multi-kills, bomb plants/defuses, incoming grenades, coordinated
-  pushes, ...) — no human observer required.
+  (duels, clutches, multi-kills, bomb plants/defuses, coordinated pushes, ...) — no
+  human observer required.
 - **Cut to cinematic establishing shots** you capture yourself (map spawns, bomb sites,
-  mid) at freezetime, on a bomb plant/uncontested defuse, or as filler during a lull.
+  mid) at freezetime or on an uncontested bomb plant/defuse.
 - **Drive HLAE** (killfeed/glow/trail colors, x-ray, above-head info, smokes) from one
   place, synced to the same colors as the auto-switch camera.
 
@@ -47,16 +47,21 @@ Every GSI tick, `packages/server/src/gsi/observer.ts` scores every alive player 
 mix of discrete events (kills, headshots, multi-kills, trades, shots fired — decaying
 over a few seconds, and weighted higher when fired with an enemy nearby) and situational
 conditions recomputed fresh each tick (clutch state, bomb plant/defuse, proximity to an
-enemy, an incoming grenade, a coordinated team push, burning, low HP).
+enemy, a coordinated team push, burning, low HP).
 `observer/auto-switch.ts` picks whoever's on top, but only actually cuts once they beat
 the current player by a margin and a minimum dwell time has passed — this is what keeps
 the camera from thrashing between near-tied scores.
 
-Cinematic shots (`cinematic/scheduler.ts`) briefly take over the camera for freezetime,
-a bomb plant/uncontested defuse, or a quiet moment, then hand control back. The bomb-plant
-shot cuts itself short early if the plant gets interrupted, or if someone opens fire on
-the planter — in that case the camera cuts straight to the shooter instead of waiting out
-the rest of the establishing shot.
+Cinematic shots (`cinematic/scheduler.ts`) briefly take over the camera for freezetime or
+an uncontested bomb plant/defuse, then hand control back. The bomb-plant shot is skipped
+entirely if a CT is already close to the site when the plant starts (that's a fight, not
+an establishing shot), and cuts itself short early if the plant gets interrupted or if
+someone opens fire on the planter mid-shot — in that case the camera cuts straight to the
+shooter instead of waiting out the rest of the establishing shot.
+
+Quiet-moment filler shots (cutting to a point-of-interest camera during a lull) are
+implemented but currently disabled for all users — the toggle is hidden in the admin UI
+and the server ignores the setting for now.
 
 ## Requirements
 

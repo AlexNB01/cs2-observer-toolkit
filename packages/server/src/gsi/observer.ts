@@ -1,4 +1,4 @@
-import type { GsiFlightGrenade, GsiPayload, GsiPlayer, KillEvent, NormalizedEvent, ObserverQueueItem } from "@cs2hud/shared";
+import type { GsiPayload, GsiPlayer, KillEvent, NormalizedEvent, ObserverQueueItem } from "@cs2hud/shared";
 import { broadcast } from "../ws/hub.js";
 
 const QUEUE_LIMIT = 8;
@@ -70,23 +70,6 @@ const STACK_RADIUS_UNITS = 600; // how close together counts as "one pack"
 const STACK_MIN_SPEED_UPS = 100; // units/sec — CS2 walk speed is ~130, so this filters out "just standing near each other"
 const BOMB_STACK_SITUATIONAL = 80; // T's stacked with the bomb still being carried (not yet planting — that's BOMB_SITUATIONAL)
 const CT_STACK_SITUATIONAL = 35; // softer signal — CTs grouping up is common and only sometimes means something's about to happen
-
-// An in-flight offensive grenade heading toward the enemy team usually
-// means a duel is about to happen wherever it lands — this lets the camera
-// already be there when it does, instead of only cutting in reactively
-// once a shot's been fired or someone's already dead. Tighter radius than
-// PROXIMITY_RANGE_UNITS since this is meant to model a flash/HE's actual
-// effective radius, not just "somewhere in the general area." Smoke/decoy
-// are weaker tells (denying vision ahead of a push/retake, not a direct
-// threat) so they're weighted lower than frag/flash/molotov.
-const GRENADE_ANTICIPATION_RANGE_UNITS = 700;
-const GRENADE_ANTICIPATION_WEIGHT: Partial<Record<GsiFlightGrenade["type"], number>> = {
-  flashbang: 40,
-  frag: 40,
-  firebomb: 25,
-  smoke: 15,
-  decoy: 15,
-};
 
 interface DeathRecord {
   steamId: string;
@@ -175,9 +158,8 @@ export function resetObserverState(): void {
 /**
  * Section 5 — Smart Auto Observer. Detects discrete events (kills, shots
  * fired) into decaying score boosts, folds in situational conditions
- * (clutch, bomb, proximity, in-flight grenades, burning, low HP) recomputed
- * fresh every tick, and republishes the full ranked list for auto-switch.ts
- * to act on.
+ * (clutch, bomb, proximity, burning, low HP) recomputed fresh every tick,
+ * and republishes the full ranked list for auto-switch.ts to act on.
  * Broadcasts to the admin UI are throttled to BROADCAST_MIN_INTERVAL_MS
  * (except right after a discrete event, for responsiveness) since
  * situational scores can shift a little on every single tick and there's
@@ -399,42 +381,6 @@ function bumpProximity(alivePlayers: [string, GsiPlayer][], bump: BumpFn): void 
 }
 
 /**
- * Purely situational like bumpProximity — recomputed fresh from whichever
- * grenades are currently in current.grenades, no memory needed, since it
- * naturally disappears the moment the grenade lands/detonates/expires.
- * Only bumps players on the *enemy* team from the thrower — the whole
- * point is flagging who's about to be caught in it, not the thrower
- * themselves.
- */
-function bumpGrenadeAnticipation(current: GsiPayload, alivePlayers: [string, GsiPlayer][], bump: BumpFn): void {
-  const grenades = current.grenades;
-  if (!grenades) return;
-
-  for (const grenade of Object.values(grenades)) {
-    if (grenade.type === "inferno") continue;
-
-    const weight = GRENADE_ANTICIPATION_WEIGHT[grenade.type];
-    if (!weight) continue;
-
-    const owner = current.allplayers?.[grenade.owner];
-    const grenadePos = parsePosition(grenade.position);
-    if (!owner || !grenadePos) continue;
-
-    const enemyTeam: "CT" | "T" = owner.team === "CT" ? "T" : "CT";
-
-    for (const [steamId, player] of alivePlayers) {
-      if (player.team !== enemyTeam) continue;
-      const pos = parsePosition(player.position);
-      if (!pos) continue;
-
-      const closeness = 1 - distance3d(grenadePos, pos) / GRENADE_ANTICIPATION_RANGE_UNITS;
-      if (closeness <= 0) continue;
-      bump(steamId, weight * Math.min(1, closeness), "UTILITY");
-    }
-  }
-}
-
-/**
  * Returns the steamIds of teammates currently moving together as a group:
  * each returned player has at least STACK_MIN_PLAYERS-1 other teammates
  * within STACK_RADIUS_UNITS who are *also* moving at STACK_MIN_SPEED_UPS
@@ -545,7 +491,6 @@ function computeRankedScores(current: GsiPayload, now: number): ObserverQueueIte
   bumpClutch("T", countAlive(allplayers, "T"), countAlive(allplayers, "CT"), allplayers, bump);
   bumpProximity(alivePlayers, bump);
   bumpStacks(current, alivePlayers, now, bump);
-  bumpGrenadeAnticipation(current, alivePlayers, bump);
 
   const items: ObserverQueueItem[] = [];
   for (const [steamId, total] of totals) {

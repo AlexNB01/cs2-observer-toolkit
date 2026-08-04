@@ -18,7 +18,6 @@ const EVENT_LABEL: Record<ObserverQueueItem["eventType"], string> = {
   LOW_HP: "Low HP",
   BOMB_STACK: "Stacked with bomb",
   CT_STACK: "CT rotate/stack",
-  UTILITY: "Grenade incoming",
 };
 
 const SLOT_LABEL: Record<CinematicShot["slot"], string> = {
@@ -218,9 +217,16 @@ export function SmartObserver() {
         <Row label="Bomb plant shots" hint="As planting starts (or, if the enemy team is already fully dead, as defusing starts) cuts to whichever captured shot is nearest">
           <Toggle checked={settings.cinematicBombPlantShotsEnabled} onChange={(v) => update({ cinematicBombPlantShotsEnabled: v })} />
         </Row>
-        <Row label="Quiet-moment filler shots" hint="Cuts briefly to a point-of-interest shot (e.g. mid) when players are near it and nothing else is happening">
-          <Toggle checked={settings.cinematicQuietMomentShotsEnabled} onChange={(v) => update({ cinematicQuietMomentShotsEnabled: v })} />
-        </Row>
+        {/*
+          Quiet-moment filler shots are implemented (see cinematic/scheduler.ts's
+          maybeShowQuietMomentShot) but disabled for all users for now — the
+          server hard-codes it off regardless of this setting (see
+          gsi/listener.ts). Toggle hidden here to match; re-add this Row to
+          bring it back once it's ready.
+          <Row label="Quiet-moment filler shots" hint="Cuts briefly to a point-of-interest shot (e.g. mid) when players are near it and nothing else is happening">
+            <Toggle checked={settings.cinematicQuietMomentShotsEnabled} onChange={(v) => update({ cinematicQuietMomentShotsEnabled: v })} />
+          </Row>
+        */}
 
         <p style={{ color: "var(--muted)", fontSize: 12 }}>
           There's no way to guess good camera spots without being in the map. In CS2: <code>spec_mode 6</code>, fly to a spot, run{" "}

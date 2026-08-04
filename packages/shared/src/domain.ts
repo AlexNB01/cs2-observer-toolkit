@@ -48,8 +48,7 @@ export interface ObserverQueueItem {
     | "BURNING"
     | "LOW_HP"
     | "BOMB_STACK"
-    | "CT_STACK"
-    | "UTILITY";
+    | "CT_STACK";
   priority: number;
   createdAt: string;
 }

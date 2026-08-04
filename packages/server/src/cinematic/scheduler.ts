@@ -15,13 +15,33 @@ const BOMB_PLANT_SHOT_DURATION_MS = 4000; // roughly matches the ~3.2s plant ani
 const BOMB_DEFUSE_SHOT_DURATION_WITH_KIT_MS = 5000;
 const BOMB_DEFUSE_SHOT_DURATION_NO_KIT_MS = 10_000;
 const BOMB_SITE_MAX_DISTANCE_UNITS = 1500; // skip if no captured shot is anywhere near the plant/defuse
+// If a CT is already this close when the plant starts, the site is
+// contested right from the start — skip the establishing shot entirely
+// rather than risk missing the retake fight while staring at a static cam
+// (the same reasoning as maybeShowBombDefuseShot only firing when the
+// defuse is uncontested, just checked at the start instead of throughout).
+// Tighter than observer.ts's PROXIMITY_RANGE_UNITS (1200, "somewhere in the
+// area, maybe behind a wall") since this needs to mean "realistically
+// already fighting over the site," not just "on that side of the map."
+const BOMB_PLANT_CONTEST_RADIUS_UNITS = 500;
 const QUIET_MOMENT_SHOT_DURATION_MS = 4000;
 const QUIET_MOMENT_COOLDOWN_MS = 45_000; // shared across all three triggers, so filler shots don't stack right after a real one
 const QUIET_SCORE_THRESHOLD = 30; // ambient proximity/decaying-engaging routinely sits in the 20s even when nothing's actually happening — 20 almost never triggered
+// The top score dipping under QUIET_SCORE_THRESHOLD for a single tick isn't
+// actually a lull — decaying scores (engaging, kills) naturally sag between
+// discrete events even mid-fight, e.g. the gap between two shots. Requiring
+// it to stay under the threshold for this long before triggering filler is
+// the same idea as auto-switch's MIN_DWELL_MS: without it, one unlucky tick
+// could cut away from a genuinely live fight for the full shot duration.
+const QUIET_MIN_DWELL_MS = 3_000;
 const QUIET_PRESENCE_RADIUS_UNITS = 700;
 
 let lastRoundWinner: "CT" | "T" | null = null;
 let lastCinematicActivityAt = 0;
+// When the top score first dropped under QUIET_SCORE_THRESHOLD, or null if
+// it's currently at/above threshold (or the round isn't live) — see
+// QUIET_MIN_DWELL_MS.
+let quietSince: number | null = null;
 
 // Tracks the bomb-plant establishing shot specifically (not freezetime/
 // defuse/quiet-moment) so it can be cut short from outside its own
@@ -216,6 +236,12 @@ export function maybeRunCinematicSequence(mapName: string | undefined, roundNumb
  * slot) is nearest the plant, then hands back. Also records the planter and
  * their enemy team so cancelBombPlantShot/maybeRedirectToShooterDuringBombPlant
  * can react while this shot is up.
+ *
+ * Skipped entirely if a CT is already within BOMB_PLANT_CONTEST_RADIUS_UNITS
+ * of the plant when it starts — that's not a clean establishing-shot moment,
+ * it's a fight already happening, and the reactive camera (Smart Observer's
+ * BOMB_SITUATIONAL/ENGAGING scoring) is better placed to follow it than a
+ * static cam would be.
  */
 export function maybeShowBombPlantShot(payload: GsiPayload, enabled: boolean): void {
   if (!enabled) return;
@@ -228,6 +254,14 @@ export function maybeShowBombPlantShot(payload: GsiPayload, enabled: boolean): v
   if (!planter || !plantPos) return;
 
   const enemyTeam: "CT" | "T" = planter.team === "CT" ? "T" : "CT";
+
+  const contested = Object.values(payload.allplayers ?? {}).some((p) => {
+    if (p.team !== enemyTeam || (p.state?.health ?? 0) <= 0) return false;
+    const pos = parsePosition(p.position);
+    return pos !== undefined && distance3d(plantPos, pos) <= BOMB_PLANT_CONTEST_RADIUS_UNITS;
+  });
+  if (contested) return;
+
   showNearestBombSiteShot(mapName, plantPos, "bomb_plant", BOMB_PLANT_SHOT_DURATION_MS, {
     planterSteamId: bomb.player,
     enemyTeam,
@@ -262,8 +296,9 @@ export function maybeShowBombDefuseShot(payload: GsiPayload, enabled: boolean): 
 }
 
 /**
- * Opportunistic filler: while a round is live, if nobody has a meaningful
- * Smart Observer score right now (nothing's happening) and there are
+ * Opportunistic filler: while a round is live, if nobody has had a
+ * meaningful Smart Observer score for at least QUIET_MIN_DWELL_MS (nothing's
+ * really happening, not just a one-tick dip mid-fight) and there are
  * actually players near a captured "poi" shot (mid, or anywhere else that
  * isn't spawn/bombsite-plant-tied), cut to it briefly before handing back
  * — like a broadcast director filling a lull rather than staring at an
@@ -272,16 +307,27 @@ export function maybeShowBombDefuseShot(payload: GsiPayload, enabled: boolean): 
  */
 export function maybeShowQuietMomentShot(payload: GsiPayload, enabled: boolean): void {
   if (!enabled) return;
-  if (Date.now() - lastCinematicActivityAt < QUIET_MOMENT_COOLDOWN_MS) return;
 
   const phase = payload.phase_countdowns?.phase ?? payload.round?.phase;
-  if (phase !== "live") return;
+  if (phase !== "live") {
+    quietSince = null;
+    return;
+  }
+
+  const now = Date.now();
+  const top = getObserverQueue()[0];
+  if (top && top.priority >= QUIET_SCORE_THRESHOLD) {
+    quietSince = null;
+    return;
+  }
+
+  if (quietSince === null) quietSince = now;
+  if (now - quietSince < QUIET_MIN_DWELL_MS) return;
+
+  if (now - lastCinematicActivityAt < QUIET_MOMENT_COOLDOWN_MS) return;
 
   const mapName = payload.map?.name;
   if (!mapName) return;
-
-  const top = getObserverQueue()[0];
-  if (top && top.priority >= QUIET_SCORE_THRESHOLD) return;
 
   const poiShots = listCinematicShots(mapName).filter((s) => s.slot === "poi");
   if (poiShots.length === 0) return;
@@ -301,7 +347,8 @@ export function maybeShowQuietMomentShot(payload: GsiPayload, enabled: boolean):
   }
   if (!nearest) return;
 
-  suppressAutoSwitchUntil(Date.now() + QUIET_MOMENT_SHOT_DURATION_MS + 500);
+  quietSince = null;
+  suppressAutoSwitchUntil(now + QUIET_MOMENT_SHOT_DURATION_MS + 500);
   fireShot(nearest.shot, "quiet_moment");
   setTimeout(handBackToObserver, QUIET_MOMENT_SHOT_DURATION_MS);
 }

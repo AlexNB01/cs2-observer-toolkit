@@ -113,9 +113,9 @@ export interface GsiPayload {
   /**
    * Requires "allgrenades" "1" in the GSI cfg (see gsi/cfg-generator.ts) —
    * without it CS2 never includes this key at all. Keyed by grenade entity
-   * ID. Consumed by gsi/observer.ts to anticipate an imminent duel (an
-   * in-flight flashbang/frag/firebomb heading toward someone) before any
-   * shot is actually fired.
+   * ID. Not currently consumed by anything — gsi/observer.ts used to derive
+   * a "grenade landing near you" priority bump from this, but that gave
+   * players score just for being near a flash/HE that never even hit them.
    */
   grenades?: Record<string, GsiGrenade>;
   previously?: unknown; // diff of the previous payload, shape mirrors the full payload
