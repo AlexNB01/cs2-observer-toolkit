@@ -21,9 +21,9 @@ const BROADCAST_MIN_INTERVAL_MS = 500;
  *    the plain baseline instead.
  *  - Situational score: conditions that are true *right now* (clutch,
  *    a contested defuse, near an enemy, holding an unnoticed angle on one
- *    (see bumpFlankPotential), on fire, low HP) are recomputed fresh every
- *    tick from the current payload — no history needed, since they
- *    naturally reach zero the moment the condition stops being true.
+ *    (see bumpFlankPotential)) are recomputed fresh every tick from the
+ *    current payload — no history needed, since they naturally reach zero
+ *    the moment the condition stops being true.
  * auto-switch.ts picks whoever has the highest total, but only actually
  * switches away from the current player once a challenger clearly beats
  * them (see SWITCH_MARGIN there) — that hysteresis on the switch
@@ -74,10 +74,8 @@ const ENGAGING_CAP = 45;
 const CLUTCH_SITUATIONAL_BASE = 1000;
 const CLUTCH_SITUATIONAL_PER_ENEMY = 10;
 const BOMB_SITUATIONAL = 500;
-const BURNING_SITUATIONAL = 15;
 const PROXIMITY_MAX = 10;
 const PROXIMITY_RANGE_UNITS = 1200; // distance at which proximity's contribution reaches 0
-const LOW_HP_MAX = 8;
 
 // A "stack": several teammates moving together as a group, rather than
 // spread out on separate default spots — usually means a coordinated
@@ -88,6 +86,14 @@ const STACK_RADIUS_UNITS = 600; // how close together counts as "one pack"
 const STACK_MIN_SPEED_UPS = 100; // units/sec — CS2 walk speed is ~130, so this filters out "just standing near each other"
 const BOMB_STACK_SITUATIONAL = 80; // T's stacked with the bomb still being carried (not yet planting — that's BOMB_SITUATIONAL)
 const CT_STACK_SITUATIONAL = 35; // softer signal — CTs grouping up is common and only sometimes means something's about to happen
+// How far a detected T stack has to be from a defending CT before it's
+// worth bumping that CT for holding against it — same idea as
+// FLANK_RANGE_UNITS, just from the defender's side of the interaction.
+const PUSH_TARGET_RANGE_UNITS = 1000;
+// Duel-tier, same as FLANK_POTENTIAL_MAX — a defender who's actually
+// watching a push arrive deserves the camera as much as someone holding an
+// unnoticed angle.
+const PUSH_TARGET_SITUATIONAL = 45;
 
 interface DeathRecord {
   steamId: string;
@@ -176,9 +182,9 @@ export function resetObserverState(): void {
 /**
  * Section 5 — Smart Auto Observer. Detects discrete events (kills, shots
  * fired) into decaying score boosts, folds in situational conditions
- * (clutch, contested defuse, proximity, flank potential, burning, low HP)
- * recomputed fresh every tick, and republishes the full ranked list for
- * auto-switch.ts to act on.
+ * (clutch, contested defuse, proximity, flank potential, holding against a
+ * push) recomputed fresh every tick, and republishes the full ranked list
+ * for auto-switch.ts to act on.
  * Broadcasts to the admin UI are throttled to BROADCAST_MIN_INTERVAL_MS
  * (except right after a discrete event, for responsiveness) since
  * situational scores can shift a little on every single tick and there's
@@ -577,12 +583,51 @@ function computeStackedGroups(teamPlayers: [string, GsiPlayer][], now: number): 
 }
 
 /**
+ * When a detected T stack (bumpStacks' tStacked) is within
+ * PUSH_TARGET_RANGE_UNITS of an alive CT who's facing roughly toward the
+ * nearest one, that CT gets bumped — they're not just near the push,
+ * they're watching it arrive. A CT who isn't looking that way doesn't
+ * count: GSI can't confirm they've actually noticed anything, so this
+ * stays consistent with isFacingToward's awareness-cone semantics
+ * elsewhere (see bumpFlankPotential). Takes the already-computed tStacked
+ * set rather than recomputing it, since computeStackedGroups mutates
+ * position history as a side effect (see playerSpeed) and calling it twice
+ * for the same players in the same tick would read back their own
+ * just-updated position as "previous," always reporting zero speed.
+ */
+function bumpPushTarget(tStacked: Set<string>, alivePlayers: [string, GsiPlayer][], bump: BumpFn): void {
+  if (tStacked.size === 0) return;
+
+  const stackedTs = alivePlayers.filter(([steamId]) => tStacked.has(steamId));
+  const ctPlayers = alivePlayers.filter(([, p]) => p.team === "CT");
+
+  for (const [ctId, ctPlayer] of ctPlayers) {
+    const ctPos = parsePosition(ctPlayer.position);
+    if (!ctPos) continue;
+
+    let nearest: { pos: Vec3; distance: number } | null = null;
+    for (const [, tPlayer] of stackedTs) {
+      const tPos = parsePosition(tPlayer.position);
+      if (!tPos) continue;
+      const distance = distance3d(ctPos, tPos);
+      if (distance > PUSH_TARGET_RANGE_UNITS) continue;
+      if (!nearest || distance < nearest.distance) nearest = { pos: tPos, distance };
+    }
+    if (!nearest) continue;
+    if (!isFacingToward(ctPlayer, ctPos, nearest.pos)) continue;
+
+    bump(ctId, PUSH_TARGET_SITUATIONAL, "PUSH_TARGET");
+  }
+}
+
+/**
  * T's stacked while still carrying the bomb (not yet planting — that's
  * BOMB_SITUATIONAL) usually means a coordinated execute is under way, so
  * this features the bomb carrier specifically. CT's stacked have no
  * single natural "carrier" to point at — the group movement itself (a
  * rotate, a retake forming up) is the signal, so every player in the pack
- * gets a share of it.
+ * gets a share of it. bumpPushTarget separately features whichever CT is
+ * actually facing the incoming T stack.
  */
 function bumpStacks(current: GsiPayload, alivePlayers: [string, GsiPlayer][], now: number, bump: BumpFn): void {
   const tStacked = computeStackedGroups(
@@ -592,6 +637,7 @@ function bumpStacks(current: GsiPayload, alivePlayers: [string, GsiPlayer][], no
   if (current.bomb?.state === "carried" && current.bomb.player && tStacked.has(current.bomb.player)) {
     bump(current.bomb.player, BOMB_STACK_SITUATIONAL, "BOMB_STACK");
   }
+  bumpPushTarget(tStacked, alivePlayers, bump);
 
   const ctStacked = computeStackedGroups(
     alivePlayers.filter(([, p]) => p.team === "CT"),
@@ -659,11 +705,6 @@ function computeRankedScores(current: GsiPayload, now: number): ObserverQueueIte
     // Capped regardless of how much has accumulated — see ENGAGING_CAP.
     const engagingDecayed = Math.min(decayedScore(engagingEventScores, steamId, now, halfLifeMs), ENGAGING_CAP);
     if (engagingDecayed > 0.5) bump(steamId, engagingDecayed, "ENGAGING");
-
-    const health = player.state?.health ?? 0;
-    bump(steamId, ((100 - health) / 100) * LOW_HP_MAX, "LOW_HP");
-
-    if ((player.state?.burning ?? 0) > 0) bump(steamId, BURNING_SITUATIONAL, "BURNING");
   }
 
   // Planting is never scored here — it's a cinematic establishing-shot

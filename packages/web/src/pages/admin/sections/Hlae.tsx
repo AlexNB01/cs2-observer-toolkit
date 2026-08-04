@@ -57,8 +57,12 @@ export function Hlae() {
   async function sync() {
     setMessage(null);
     try {
-      const result = await api.post<{ path: string }>("/hlae/sync");
-      setMessage(`sync.cfg written to ${result.path} — run "exec sync" in the CS2 console.`);
+      const result = await api.post<{ path: string; executed: boolean }>("/hlae/sync");
+      setMessage(
+        result.executed
+          ? `sync.cfg written to ${result.path} and applied.`
+          : `sync.cfg written to ${result.path} — netconsole isn't connected, so run "exec sync" in the CS2 console yourself.`
+      );
     } catch (e) {
       setMessage((e as Error).message);
     }
@@ -117,7 +121,7 @@ export function Hlae() {
 
       <div style={{ display: "flex", gap: 8 }}>
         <button onClick={launch} disabled={!status?.hlaeConfigured}>Launch HLAE</button>
-        <button className="secondary" onClick={sync} disabled={!status?.cfgDirConfigured}>Write sync.cfg</button>
+        <button className="secondary" onClick={sync} disabled={!status?.cfgDirConfigured}>Write &amp; apply sync.cfg</button>
         <button className="secondary" onClick={previewCfg}>Preview sync.cfg</button>
       </div>
       {message && <p style={{ color: "var(--muted)" }}>{message}</p>}
@@ -134,8 +138,9 @@ export function Hlae() {
         </li>
         <li>Configure the HUD as usual and join the match server</li>
         <li>
-          Once all players have joined, click "Write sync.cfg" then run <code>exec sync</code> in the CS2 console (re-run
-          any time to resync colors)
+          Once all players have joined, click "Write &amp; apply sync.cfg" (re-run any time to resync colors) — this
+          applies automatically if netconsole is connected, otherwise run <code>exec sync</code> in the CS2 console
+          yourself
         </li>
       </ol>
 

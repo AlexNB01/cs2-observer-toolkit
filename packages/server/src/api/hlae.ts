@@ -6,7 +6,8 @@ import { generateSyncCfg, launchHlae, SYNC_CFG_FILENAME, writeSyncCfg } from "..
  * HLAE integration. Launching opens HLAE's own GUI (see hlae/client.ts for
  * why full unattended CS2 launch isn't automated), and "sync" writes
  * sync.cfg with real mirv_colors/mirv_deathmsg commands derived from the
- * configured CT/T colors — the user then runs `exec sync` in CS2.
+ * configured CT/T colors, then runs `exec sync` automatically over
+ * netconsole (see writeSyncCfg).
  */
 export function registerHlaeRoutes(app: FastifyInstance): void {
   app.get("/api/hlae/status", async () => {

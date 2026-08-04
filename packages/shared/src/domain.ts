@@ -46,10 +46,9 @@ export interface ObserverQueueItem {
     | "ENGAGING"
     | "PROXIMITY"
     | "FLANK_POTENTIAL"
-    | "BURNING"
-    | "LOW_HP"
     | "BOMB_STACK"
-    | "CT_STACK";
+    | "CT_STACK"
+    | "PUSH_TARGET";
   priority: number;
   createdAt: string;
 }

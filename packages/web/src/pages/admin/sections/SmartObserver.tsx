@@ -15,10 +15,9 @@ const EVENT_LABEL: Record<ObserverQueueItem["eventType"], string> = {
   ENGAGING: "Engaging",
   PROXIMITY: "Close proximity",
   FLANK_POTENTIAL: "Unnoticed angle",
-  BURNING: "On fire",
-  LOW_HP: "Low HP",
   BOMB_STACK: "Stacked with bomb",
   CT_STACK: "CT rotate/stack",
+  PUSH_TARGET: "Holding against a push",
 };
 
 const SLOT_LABEL: Record<CinematicShot["slot"], string> = {

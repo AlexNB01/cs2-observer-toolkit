@@ -3,6 +3,7 @@ import fs from "node:fs";
 import path from "node:path";
 import type { HudSettings } from "@cs2hud/shared";
 import { readHudSettings } from "../db/hud-settings-store.js";
+import { sendConsoleCommand } from "../observer/netconsole.js";
 
 export const SYNC_CFG_FILENAME = "sync.cfg";
 
@@ -24,8 +25,9 @@ function hexToRgb(hex: string): [number, number, number] {
  * advancedfx wiki (2026-08-01):
  *  - https://github.com/advancedfx/advancedfx/wiki/Source2:mirv_colors
  *  - https://github.com/advancedfx/advancedfx/wiki/Source2:mirv_deathmsg
- * The user runs `exec sync` in the CS2 console to apply it — the filename
- * has to be exactly "sync.cfg" for that to work.
+ * `exec sync` applies it — the filename has to be exactly "sync.cfg" for
+ * that to work. writeSyncCfg below runs that command automatically over
+ * netconsole right after writing the file, when it's connected.
  */
 export function generateSyncCfg(colors: Colors, toggles: HlaeToggles): string {
   const [ctR, ctG, ctB] = hexToRgb(colors.ctColor);
@@ -55,14 +57,23 @@ export function generateSyncCfg(colors: Colors, toggles: HlaeToggles): string {
   return lines.join("\n") + "\n";
 }
 
-export function writeSyncCfg(content: string): { path: string } {
+/**
+ * Writes sync.cfg, then immediately runs `exec sync` over the same
+ * netconsole connection auto-switch/cinematic shots already use (see
+ * observer/netconsole.ts) — no manual console command needed as long as
+ * that's connected. `executed` comes back false (rather than throwing)
+ * when it isn't, since the file write itself still succeeded; the caller
+ * falls back to telling the user to run `exec sync` themselves.
+ */
+export function writeSyncCfg(content: string): { path: string; executed: boolean } {
   const { cs2CfgDir } = readHudSettings();
   if (!cs2CfgDir) {
     throw new Error("CS2 cfg folder is not set. Set it on the GSI Setup page.");
   }
   const targetPath = path.join(cs2CfgDir, SYNC_CFG_FILENAME);
   fs.writeFileSync(targetPath, content, "utf-8");
-  return { path: targetPath };
+  const executed = sendConsoleCommand("exec sync");
+  return { path: targetPath, executed };
 }
 
 /**

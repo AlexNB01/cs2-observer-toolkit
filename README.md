@@ -35,7 +35,9 @@ drives the camera over CS2's own console (`-netconport`).
    `x y z pitch yaw` into the app.
 5. On **HLAE**, point it at your `HLAE.exe` (from
    [advancedfx/advancedfx](https://github.com/advancedfx/advancedfx) — not bundled here),
-   pick CT/T colors, and use "Write sync.cfg" once players have joined.
+   pick CT/T colors, and use "Write & apply sync.cfg" once players have joined. This
+   applies automatically over netconsole if it's connected; otherwise run `exec sync` in
+   the CS2 console yourself.
 
 All settings and captured camera shots persist locally in SQLite and survive
 reinstalling — see **Backup** on the GSI Setup page to export/import them as a file.
@@ -89,8 +91,9 @@ Recomputed fresh every tick from whatever's true *right now*:
 - **Coordinated pushes** — 3+ teammates moving together (not just standing near each
   other) score a bump: 80 for the bomb carrier if the T side is stacked while still
   carrying (not yet planting), 35 for every player in a stacked CT rotate/retake.
-- **Burning** — a flat 15 while on fire.
-- **Low HP** — scales up to 8 as health drops toward 0.
+- **Holding against a push** — up to 45 for whichever CT is within 1000 units of a
+  detected T stack and facing roughly toward the nearest one. Doesn't fire for a CT who
+  isn't looking that way.
 
 ### Cinematic shots
 
