@@ -44,10 +44,14 @@ reinstalling — see **Backup** on the GSI Setup page to export/import them as a
 ## How the camera logic works
 
 Every GSI tick, `packages/server/src/gsi/observer.ts` scores every alive player from a
-mix of discrete events (kills, headshots, multi-kills, trades, shots fired — decaying
-over a few seconds, and weighted higher when fired with an enemy nearby) and situational
-conditions recomputed fresh each tick (clutch state, bomb plant/defuse, proximity to an
-enemy, a coordinated team push, burning, low HP).
+mix of discrete events (kills, headshots, multi-kills, trades, shots fired — weighted
+higher when fired with an enemy nearby, and decaying over a few seconds, slower still
+while an enemy is still close by since the moment probably isn't actually over yet) and
+situational conditions recomputed fresh each tick (clutch state, proximity to an enemy, a
+coordinated team push, burning, low HP). A contested bomb defuse (enemy team still alive)
+scores the enemies, not the defuser — watching whether someone can stop it is more
+interesting than watching them hold a key, and once the enemy team is fully dead this
+scoring drops out entirely in favor of the cinematic defuse shot below.
 `observer/auto-switch.ts` picks whoever's on top, but only actually cuts once they beat
 the current player by a margin and a minimum dwell time has passed — this is what keeps
 the camera from thrashing between near-tied scores.

@@ -11,7 +11,7 @@ const EVENT_LABEL: Record<ObserverQueueItem["eventType"], string> = {
   TRADE: "Trade",
   MULTI_KILL: "Multi-kill",
   DUEL: "Duel",
-  BOMB: "Defusing",
+  BOMB_CONTEST: "Contesting defuse",
   ENGAGING: "Engaging",
   PROXIMITY: "Close proximity",
   BURNING: "On fire",

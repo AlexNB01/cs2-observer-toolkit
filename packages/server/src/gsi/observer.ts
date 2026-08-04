@@ -11,9 +11,11 @@ const BROADCAST_MIN_INTERVAL_MS = 500;
  * every GSI tick, made of two kinds of contribution:
  *  - Decaying event score: discrete moments that already happened (a
  *    kill, a shot fired) add a one-time boost that fades on its own
- *    (EVENT_SCORE_HALF_LIFE_MS) rather than being shown once and then
- *    vanishing — a kill stays "interesting" for a few seconds afterward,
- *    not zero the instant the camera first cuts to it.
+ *    rather than being shown once and then vanishing — a kill stays
+ *    "interesting" for a few seconds afterward, not zero the instant the
+ *    camera first cuts to it. How fast it fades isn't fixed — see
+ *    decayHalfLifeFor: an enemy still nearby means the moment probably
+ *    isn't actually over, so it decays slower than one with nobody around.
  *  - Situational score: conditions that are true *right now* (clutch,
  *    mid-plant/defuse, near an enemy, on fire, low HP) are recomputed
  *    fresh every tick from the current payload — no history needed, since
@@ -25,6 +27,12 @@ const BROADCAST_MIN_INTERVAL_MS = 500;
  * between two players with near-identical scores.
  */
 const EVENT_SCORE_HALF_LIFE_MS = 5_000;
+// Upper end of the half-life range, reached once an enemy is right on top
+// of the player — see decayHalfLifeFor. Nowhere near instant (the baseline
+// is already only 5s), but enough that a brief mid-fight lull (reloading,
+// re-peeking, a teammate trading instead) doesn't tank their score just
+// because the fight is still developing.
+const EVENT_SCORE_HALF_LIFE_NEAR_ENEMY_MS = 12_000;
 
 const KILL_BASE = 100;
 const HEADSHOT_BONUS = 15;
@@ -194,10 +202,10 @@ export function processObserverEvents(events: NormalizedEvent[], current: GsiPay
   }
 }
 
-function decayedScore(map: Map<string, EventAccumulator>, steamId: string, now: number): number {
+function decayedScore(map: Map<string, EventAccumulator>, steamId: string, now: number, halfLifeMs: number): number {
   const acc = map.get(steamId);
   if (!acc) return 0;
-  const halfLives = (now - acc.lastDecayAt) / EVENT_SCORE_HALF_LIFE_MS;
+  const halfLives = (now - acc.lastDecayAt) / halfLifeMs;
   return acc.score * Math.pow(0.5, halfLives);
 }
 
@@ -206,9 +214,10 @@ function accumulateScore(
   steamId: string,
   amount: number,
   eventType: ObserverQueueItem["eventType"],
-  now: number
+  now: number,
+  halfLifeMs: number
 ): void {
-  const current = decayedScore(map, steamId, now);
+  const current = decayedScore(map, steamId, now, halfLifeMs);
   map.set(steamId, { score: current + amount, lastDecayAt: now, topEventType: eventType });
 }
 
@@ -247,30 +256,55 @@ function countAlive(allplayers: Record<string, GsiPlayer>, team: "CT" | "T"): nu
 }
 
 /**
- * Detects a shot as a drop in the active weapon's ammo_clip since the last
- * tick, and adds a small decaying boost rather than the old fixed-value,
- * cooldown-gated one-shot event. Sustained fire naturally keeps the score
- * elevated (each shot adds more before earlier ones have fully decayed);
- * it fades on its own a few seconds after they stop shooting. A weapon
- * switch just re-baselines the tracked ammo count rather than counting as
- * a shot.
+ * 0 (no alive enemy within PROXIMITY_RANGE_UNITS) to 1 (enemy right on top
+ * of them) — same falloff shape as bumpProximity, against whichever alive
+ * enemy is currently closest. Used both for ENGAGING_ENEMY_NEARBY_BONUS
+ * (closeness > 0) and to scale decay speed (see decayHalfLifeFor).
  */
-/** True if `player` has an alive enemy within PROXIMITY_RANGE_UNITS right now — see ENGAGING_ENEMY_NEARBY_BONUS. */
-function hasNearbyEnemy(player: GsiPlayer, allplayers: Record<string, GsiPlayer>): boolean {
+function nearestEnemyCloseness(player: GsiPlayer, allplayers: Record<string, GsiPlayer>): number {
   const pos = parsePosition(player.position);
-  if (!pos) return false;
+  if (!pos) return 0;
 
   const enemyTeam: "CT" | "T" = player.team === "CT" ? "T" : "CT";
+  let closest = 0;
   for (const other of Object.values(allplayers)) {
     if (other.team !== enemyTeam || (other.state?.health ?? 0) <= 0) continue;
     const otherPos = parsePosition(other.position);
     if (!otherPos) continue;
-    if (distance3d(pos, otherPos) <= PROXIMITY_RANGE_UNITS) return true;
+    const closeness = 1 - distance3d(pos, otherPos) / PROXIMITY_RANGE_UNITS;
+    if (closeness > closest) closest = closeness;
   }
-  return false;
+  return Math.min(1, closest);
 }
 
-/** Returns the steamIds of everyone whose ammo_clip dropped this tick — see getLastTickShooters. */
+/** Interpolates from EVENT_SCORE_HALF_LIFE_MS (closeness 0) to EVENT_SCORE_HALF_LIFE_NEAR_ENEMY_MS (closeness 1). */
+function halfLifeForCloseness(closeness: number): number {
+  return EVENT_SCORE_HALF_LIFE_MS + closeness * (EVENT_SCORE_HALF_LIFE_NEAR_ENEMY_MS - EVENT_SCORE_HALF_LIFE_MS);
+}
+
+/**
+ * How slowly `player`'s decaying kill/engaging score fades right now — an
+ * enemy still nearby means the moment probably isn't actually over, so it
+ * decays slower than one with nobody around. Recomputed fresh on every read
+ * rather than tracked continuously — like the situational scores below, it
+ * reflects *current* proximity, so the effective rate can shift tick to
+ * tick as an enemy closes in or backs off.
+ */
+function decayHalfLifeFor(player: GsiPlayer, allplayers: Record<string, GsiPlayer>): number {
+  return halfLifeForCloseness(nearestEnemyCloseness(player, allplayers));
+}
+
+/**
+ * Detects a shot as a drop in the active weapon's ammo_clip since the last
+ * tick, and adds a small decaying boost rather than the old fixed-value,
+ * cooldown-gated one-shot event. Sustained fire naturally keeps the score
+ * elevated (each shot adds more before earlier ones have fully decayed);
+ * it fades on its own a few seconds after they stop shooting (faster still
+ * if no enemy is nearby — see decayHalfLifeFor). A weapon switch just
+ * re-baselines the tracked ammo count rather than counting as a shot.
+ * Returns the steamIds of everyone whose ammo_clip dropped this tick — see
+ * getLastTickShooters.
+ */
 function updateEngagingScores(current: GsiPayload, now: number): string[] {
   const allplayers = current.allplayers ?? {};
   const shooters: string[] = [];
@@ -292,8 +326,9 @@ function updateEngagingScores(current: GsiPayload, now: number): string[] {
     lastAmmoByPlayer.set(steamId, { weaponName: activeWeapon.name, ammoClip: activeWeapon.ammo_clip });
 
     if (shotFired) {
-      const boost = ENGAGING_SHOT_BOOST + (hasNearbyEnemy(player, allplayers) ? ENGAGING_ENEMY_NEARBY_BONUS : 0);
-      accumulateScore(engagingEventScores, steamId, boost, "ENGAGING", now);
+      const closeness = nearestEnemyCloseness(player, allplayers);
+      const boost = ENGAGING_SHOT_BOOST + (closeness > 0 ? ENGAGING_ENEMY_NEARBY_BONUS : 0);
+      accumulateScore(engagingEventScores, steamId, boost, "ENGAGING", now, halfLifeForCloseness(closeness));
       shooters.push(steamId);
     }
   }
@@ -340,7 +375,7 @@ function handleKill(kill: KillEvent, current: GsiPayload, now: number): void {
     recentDeaths = recentDeaths.filter((d) => kill.timestamp - d.timestamp < RECENT_DEATH_WINDOW_MS);
   }
 
-  accumulateScore(killEventScores, kill.attackerSteamId, amount, eventType, now);
+  accumulateScore(killEventScores, kill.attackerSteamId, amount, eventType, now, decayHalfLifeFor(attacker, allplayers));
 }
 
 function bumpClutch(team: "CT" | "T", aliveOnTeam: number, aliveOnEnemyTeam: number, allplayers: Record<string, GsiPlayer>, bump: BumpFn): void {
@@ -434,6 +469,30 @@ function bumpStacks(current: GsiPayload, alivePlayers: [string, GsiPlayer][], no
 }
 
 /**
+ * While a CT is defusing, whoever's actually worth watching depends on
+ * whether the defuse can still be stopped. A fully-dead enemy team means
+ * an uncontested defuse — nothing left to happen, so this bumps nobody and
+ * the cinematic bomb-defuse shot takes over instead (see
+ * cinematic/scheduler.ts's maybeShowBombDefuseShot). If the T side still
+ * has anyone alive, though, *they're* the interesting ones: the defuser
+ * doing nothing but holding a key is a lot less watchable than whether a T
+ * makes it back in time to stop them, so every alive T gets bumped instead
+ * of the defuser.
+ */
+function bumpBombDefuse(current: GsiPayload, allplayers: Record<string, GsiPlayer>, bump: BumpFn): void {
+  if (current.bomb?.state !== "defusing" || !current.bomb.player) return;
+  const defuser = allplayers[current.bomb.player];
+  if (!defuser) return;
+
+  const enemyTeam: "CT" | "T" = defuser.team === "CT" ? "T" : "CT";
+  for (const [steamId, player] of Object.entries(allplayers)) {
+    if (player.team === enemyTeam && (player.state?.health ?? 0) > 0) {
+      bump(steamId, BOMB_SITUATIONAL, "BOMB_CONTEST");
+    }
+  }
+}
+
+/**
  * Rebuilds the full ranked list from scratch every tick: each player's
  * total is their decaying event score plus whatever situational
  * conditions are true for them right now. The eventType on each returned
@@ -457,40 +516,39 @@ function computeRankedScores(current: GsiPayload, now: number): ObserverQueueIte
   };
 
   for (const [steamId, player] of alivePlayers) {
-    const killDecayed = decayedScore(killEventScores, steamId, now);
+    const halfLifeMs = decayHalfLifeFor(player, allplayers);
+
+    const killDecayed = decayedScore(killEventScores, steamId, now, halfLifeMs);
     const killAcc = killEventScores.get(steamId);
     if (killDecayed > 0.5 && killAcc) bump(steamId, killDecayed, killAcc.topEventType);
 
     // Capped regardless of how much has accumulated — see ENGAGING_CAP.
-    const engagingDecayed = Math.min(decayedScore(engagingEventScores, steamId, now), ENGAGING_CAP);
+    const engagingDecayed = Math.min(decayedScore(engagingEventScores, steamId, now, halfLifeMs), ENGAGING_CAP);
     if (engagingDecayed > 0.5) bump(steamId, engagingDecayed, "ENGAGING");
 
     const health = player.state?.health ?? 0;
     bump(steamId, ((100 - health) / 100) * LOW_HP_MAX, "LOW_HP");
 
     if ((player.state?.burning ?? 0) > 0) bump(steamId, BURNING_SITUATIONAL, "BURNING");
-
-    // Planting is never scored here — it's a cinematic establishing-shot
-    // trigger instead (see cinematic/scheduler.ts's maybeShowBombPlantShot,
-    // fired on bomb_planting), so the planter's own priority never fights
-    // that shot for the camera. Defusing gets the same treatment, but only
-    // once the enemy team is fully dead — with nobody left to contest it,
-    // maybeShowBombDefuseShot takes the cinematic shot instead (see
-    // gsi/listener.ts's bomb_defusing handling). While enemies are still
-    // alive there's real risk of an interrupt, so the reactive priority
-    // keeps the camera locked on the defuser as before.
-    if (current.bomb?.state === "defusing" && current.bomb?.player === steamId) {
-      const enemyTeam: "CT" | "T" = player.team === "CT" ? "T" : "CT";
-      if (countAlive(allplayers, enemyTeam) > 0) {
-        bump(steamId, BOMB_SITUATIONAL, "BOMB");
-      }
-    }
   }
 
+  // Planting is never scored here — it's a cinematic establishing-shot
+  // trigger instead (see cinematic/scheduler.ts's maybeShowBombPlantShot,
+  // fired on bomb_planting), so the planter's own priority never fights
+  // that shot for the camera. Defusing gets the same treatment, but only
+  // once the enemy team is fully dead — with nobody left to contest it,
+  // maybeShowBombDefuseShot takes the cinematic shot instead (see
+  // gsi/listener.ts's bomb_defusing handling), so the reactive priority
+  // doesn't need to fight it for the camera. While enemies are still alive,
+  // bumpBombDefuse below keeps the camera on *them* instead of the
+  // defuser — the defuse itself is a static non-event until someone
+  // actually stops it, and watching for that is more useful than watching
+  // the defuser wait.
   bumpClutch("CT", countAlive(allplayers, "CT"), countAlive(allplayers, "T"), allplayers, bump);
   bumpClutch("T", countAlive(allplayers, "T"), countAlive(allplayers, "CT"), allplayers, bump);
   bumpProximity(alivePlayers, bump);
   bumpStacks(current, alivePlayers, now, bump);
+  bumpBombDefuse(current, allplayers, bump);
 
   const items: ObserverQueueItem[] = [];
   for (const [steamId, total] of totals) {

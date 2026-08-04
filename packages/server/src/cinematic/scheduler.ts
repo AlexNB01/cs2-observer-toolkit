@@ -273,8 +273,8 @@ export function maybeShowBombPlantShot(payload: GsiPayload, enabled: boolean): v
  * already dead — with nobody left to contest it, there's no risk of
  * missing a fight elsewhere by cutting away, so it's a clean broadcast
  * beat rather than a gamble. (While enemies are still alive, the reactive
- * priority in gsi/observer.ts keeps the camera on the defuser instead —
- * see its BOMB_SITUATIONAL comment.)
+ * priority in gsi/observer.ts keeps the camera on *them* instead of the
+ * defuser — see bumpBombDefuse there.)
  */
 export function maybeShowBombDefuseShot(payload: GsiPayload, enabled: boolean): void {
   if (!enabled) return;

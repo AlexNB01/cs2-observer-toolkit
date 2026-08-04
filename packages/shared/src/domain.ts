@@ -42,7 +42,7 @@ export interface ObserverQueueItem {
     | "DUEL"
     | "CLUTCH"
     | "MULTI_KILL"
-    | "BOMB"
+    | "BOMB_CONTEST"
     | "ENGAGING"
     | "PROXIMITY"
     | "BURNING"
