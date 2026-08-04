@@ -14,6 +14,7 @@ const EVENT_LABEL: Record<ObserverQueueItem["eventType"], string> = {
   BOMB_CONTEST: "Contesting defuse",
   ENGAGING: "Engaging",
   PROXIMITY: "Close proximity",
+  FLANK_POTENTIAL: "Unnoticed angle",
   BURNING: "On fire",
   LOW_HP: "Low HP",
   BOMB_STACK: "Stacked with bomb",

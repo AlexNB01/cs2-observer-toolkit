@@ -45,6 +45,7 @@ export interface ObserverQueueItem {
     | "BOMB_CONTEST"
     | "ENGAGING"
     | "PROXIMITY"
+    | "FLANK_POTENTIAL"
     | "BURNING"
     | "LOW_HP"
     | "BOMB_STACK"

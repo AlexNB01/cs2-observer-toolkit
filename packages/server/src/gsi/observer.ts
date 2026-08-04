@@ -14,12 +14,16 @@ const BROADCAST_MIN_INTERVAL_MS = 500;
  *    rather than being shown once and then vanishing — a kill stays
  *    "interesting" for a few seconds afterward, not zero the instant the
  *    camera first cuts to it. How fast it fades isn't fixed — see
- *    decayHalfLifeFor: an enemy still nearby means the moment probably
- *    isn't actually over, so it decays slower than one with nobody around.
+ *    decayHalfLifeFor: an enemy still in view means the moment probably
+ *    isn't actually over, so it decays slower the closer that enemy is;
+ *    looking somewhere with no enemy in sight at all (even one standing
+ *    right behind them) means they've moved on, so it decays faster than
+ *    the plain baseline instead.
  *  - Situational score: conditions that are true *right now* (clutch,
- *    mid-plant/defuse, near an enemy, on fire, low HP) are recomputed
- *    fresh every tick from the current payload — no history needed, since
- *    they naturally reach zero the moment the condition stops being true.
+ *    a contested defuse, near an enemy, holding an unnoticed angle on one
+ *    (see bumpFlankPotential), on fire, low HP) are recomputed fresh every
+ *    tick from the current payload — no history needed, since they
+ *    naturally reach zero the moment the condition stops being true.
  * auto-switch.ts picks whoever has the highest total, but only actually
  * switches away from the current player once a challenger clearly beats
  * them (see SWITCH_MARGIN there) — that hysteresis on the switch
@@ -27,12 +31,18 @@ const BROADCAST_MIN_INTERVAL_MS = 500;
  * between two players with near-identical scores.
  */
 const EVENT_SCORE_HALF_LIFE_MS = 5_000;
-// Upper end of the half-life range, reached once an enemy is right on top
-// of the player — see decayHalfLifeFor. Nowhere near instant (the baseline
-// is already only 5s), but enough that a brief mid-fight lull (reloading,
-// re-peeking, a teammate trading instead) doesn't tank their score just
-// because the fight is still developing.
+// Upper end of the half-life range, reached once an in-view enemy is right
+// on top of the player — see decayHalfLifeFor. Nowhere near instant (the
+// baseline is already only 5s), but enough that a brief mid-fight lull
+// (reloading, re-peeking, a teammate trading instead) doesn't tank their
+// score just because the fight is still developing.
 const EVENT_SCORE_HALF_LIFE_NEAR_ENEMY_MS = 12_000;
+// Faster than the plain baseline — used instead of it when the player has
+// no enemy anywhere in view at all (see nearestEnemyClosenessInView). Not
+// watching for a threat at all is a stronger "this is over" signal than
+// merely being far from the nearest one, so it decays quicker than the
+// baseline rather than just skipping the near-enemy bonus.
+const EVENT_SCORE_HALF_LIFE_NO_ENEMY_IN_SIGHT_MS = 2_500;
 
 const KILL_BASE = 100;
 const HEADSHOT_BONUS = 15;
@@ -41,13 +51,13 @@ const TRADE_BONUS = 30;
 const CLUTCH_WIN_BASE_BONUS = 40;
 const CLUTCH_WIN_BONUS_PER_ENEMY = 20;
 const ENGAGING_SHOT_BOOST = 10;
-// Extra per-shot boost when an alive enemy is within PROXIMITY_RANGE_UNITS
-// at the moment of firing — the closest GSI-derivable proxy for "shooting
-// at the enemy" rather than just "shooting" (no line-of-sight/aim data
-// exists to do better). Sprays with nobody nearby only ever get the base
-// boost, so a real exchange stands out and the camera is less likely to
-// miss it.
-const ENGAGING_ENEMY_NEARBY_BONUS = 15;
+// Extra per-shot boost when the shooter is roughly aimed at an alive enemy
+// within PROXIMITY_RANGE_UNITS (see isShootingTowardEnemy) — distinguishes
+// an actual exchange from spraying a wall or firing with nobody in view,
+// which only ever gets the base boost. Uses SHOOTING_AT_ENEMY_COS_THRESHOLD
+// rather than FLANK_VIEW_COS_THRESHOLD's wider cone, since this is meant to
+// approximate an actual shot direction, not just general awareness.
+const ENGAGING_SHOOTING_AT_ENEMY_BONUS = 15;
 // Hard ceiling on the engaging (shots-fired) contribution, independent of
 // weapon fire rate or magazine size. Without this, a high-RPM/large-mag
 // weapon (Negev: ~750rpm, 150-round mag) held on full auto into a wall
@@ -56,7 +66,7 @@ const ENGAGING_ENEMY_NEARBY_BONUS = 15;
 // just from spraying, with nobody actually being fought. Capping the
 // *decayed value* at read time bounds that regardless of rate or
 // duration; it can't be raised by firing faster or longer. Raised
-// alongside ENGAGING_ENEMY_NEARBY_BONUS so a genuine firefight (boost +
+// alongside ENGAGING_SHOOTING_AT_ENEMY_BONUS so a genuine firefight (boost +
 // bonus per shot) can actually separate itself from a lone wall-spray
 // (boost only) instead of both saturating the same ceiling equally fast.
 const ENGAGING_CAP = 45;
@@ -166,8 +176,9 @@ export function resetObserverState(): void {
 /**
  * Section 5 — Smart Auto Observer. Detects discrete events (kills, shots
  * fired) into decaying score boosts, folds in situational conditions
- * (clutch, bomb, proximity, burning, low HP) recomputed fresh every tick,
- * and republishes the full ranked list for auto-switch.ts to act on.
+ * (clutch, contested defuse, proximity, flank potential, burning, low HP)
+ * recomputed fresh every tick, and republishes the full ranked list for
+ * auto-switch.ts to act on.
  * Broadcasts to the admin UI are throttled to BROADCAST_MIN_INTERVAL_MS
  * (except right after a discrete event, for responsiveness) since
  * situational scores can shift a little on every single tick and there's
@@ -256,12 +267,14 @@ function countAlive(allplayers: Record<string, GsiPlayer>, team: "CT" | "T"): nu
 }
 
 /**
- * 0 (no alive enemy within PROXIMITY_RANGE_UNITS) to 1 (enemy right on top
- * of them) — same falloff shape as bumpProximity, against whichever alive
- * enemy is currently closest. Used both for ENGAGING_ENEMY_NEARBY_BONUS
- * (closeness > 0) and to scale decay speed (see decayHalfLifeFor).
+ * 0 (no alive enemy currently in `player`'s view) to 1 (an in-view enemy is
+ * right on top of them) — same falloff shape as bumpProximity, but only
+ * against enemies within `player`'s forward view cone (isFacingToward's
+ * default, wide awareness cone — this isn't an aim check). An enemy
+ * standing right behind them doesn't count, on purpose: see decayHalfLifeFor
+ * for why that distinction is exactly the point here.
  */
-function nearestEnemyCloseness(player: GsiPlayer, allplayers: Record<string, GsiPlayer>): number {
+function nearestEnemyClosenessInView(player: GsiPlayer, allplayers: Record<string, GsiPlayer>): number {
   const pos = parsePosition(player.position);
   if (!pos) return 0;
 
@@ -271,6 +284,7 @@ function nearestEnemyCloseness(player: GsiPlayer, allplayers: Record<string, Gsi
     if (other.team !== enemyTeam || (other.state?.health ?? 0) <= 0) continue;
     const otherPos = parsePosition(other.position);
     if (!otherPos) continue;
+    if (!isFacingToward(player, pos, otherPos)) continue;
     const closeness = 1 - distance3d(pos, otherPos) / PROXIMITY_RANGE_UNITS;
     if (closeness > closest) closest = closeness;
   }
@@ -283,15 +297,21 @@ function halfLifeForCloseness(closeness: number): number {
 }
 
 /**
- * How slowly `player`'s decaying kill/engaging score fades right now — an
- * enemy still nearby means the moment probably isn't actually over, so it
- * decays slower than one with nobody around. Recomputed fresh on every read
- * rather than tracked continuously — like the situational scores below, it
- * reflects *current* proximity, so the effective rate can shift tick to
- * tick as an enemy closes in or backs off.
+ * How slowly `player`'s decaying kill/engaging score fades right now.
+ * Looking toward an enemy who's still alive means the moment probably
+ * isn't actually over, so it decays slower the closer that in-view enemy
+ * is (up to EVENT_SCORE_HALF_LIFE_NEAR_ENEMY_MS). Looking somewhere with no
+ * enemy in view at all — even one standing right behind them — means
+ * they've moved on, so it decays *faster* than the plain baseline instead
+ * (EVENT_SCORE_HALF_LIFE_NO_ENEMY_IN_SIGHT_MS). Recomputed fresh on every
+ * read rather than tracked continuously — like the situational scores
+ * below, it reflects *current* facing/proximity, so the effective rate can
+ * shift tick to tick as a player turns or an enemy closes in.
  */
 function decayHalfLifeFor(player: GsiPlayer, allplayers: Record<string, GsiPlayer>): number {
-  return halfLifeForCloseness(nearestEnemyCloseness(player, allplayers));
+  const closenessInView = nearestEnemyClosenessInView(player, allplayers);
+  if (closenessInView <= 0) return EVENT_SCORE_HALF_LIFE_NO_ENEMY_IN_SIGHT_MS;
+  return halfLifeForCloseness(closenessInView);
 }
 
 /**
@@ -326,9 +346,8 @@ function updateEngagingScores(current: GsiPayload, now: number): string[] {
     lastAmmoByPlayer.set(steamId, { weaponName: activeWeapon.name, ammoClip: activeWeapon.ammo_clip });
 
     if (shotFired) {
-      const closeness = nearestEnemyCloseness(player, allplayers);
-      const boost = ENGAGING_SHOT_BOOST + (closeness > 0 ? ENGAGING_ENEMY_NEARBY_BONUS : 0);
-      accumulateScore(engagingEventScores, steamId, boost, "ENGAGING", now, halfLifeForCloseness(closeness));
+      const boost = ENGAGING_SHOT_BOOST + (isShootingTowardEnemy(player, allplayers) ? ENGAGING_SHOOTING_AT_ENEMY_BONUS : 0);
+      accumulateScore(engagingEventScores, steamId, boost, "ENGAGING", now, decayHalfLifeFor(player, allplayers));
       shooters.push(steamId);
     }
   }
@@ -388,10 +407,13 @@ function bumpClutch(team: "CT" | "T", aliveOnTeam: number, aliveOnEnemyTeam: num
 
 /**
  * Adds a smooth falloff contribution to both players in a CT/T pair based
- * on distance — no threshold, no transition detection, no cooldown; it's
- * naturally continuous and naturally reaches zero as they move apart. GSI
- * has no line-of-sight data, so this stays capped low (PROXIMITY_MAX) —
- * "close" can just mean "on opposite sides of a wall."
+ * purely on distance — no threshold, no transition detection, no cooldown;
+ * it's naturally continuous and naturally reaches zero as they move apart.
+ * GSI has no map geometry to ray-cast against, so even with position and
+ * view direction there's no way to know a wall is between them — this
+ * stays capped low (PROXIMITY_MAX) accordingly. bumpFlankPotential below
+ * layers facing direction on top of the same distance data for a much
+ * stronger (if still wall-blind) signal.
  */
 function bumpProximity(alivePlayers: [string, GsiPlayer][], bump: BumpFn): void {
   const ctPlayers = alivePlayers.filter(([, p]) => p.team === "CT");
@@ -412,6 +434,118 @@ function bumpProximity(alivePlayers: [string, GsiPlayer][], bump: BumpFn): void 
       bump(ctId, amount, "PROXIMITY");
       bump(tId, amount, "PROXIMITY");
     }
+  }
+}
+
+// Tighter than PROXIMITY_RANGE_UNITS — flank potential means being close
+// enough to actually press the angle, not just generally on that side of
+// the map.
+const FLANK_RANGE_UNITS = 1000;
+// Cosine of roughly a ±60° cone around a player's `forward` vector. CS2's
+// actual FOV is wider than this, so crossing this threshold reads as
+// "generally facing that way," not "aimed precisely at them" — deliberately
+// generous since the goal is an awareness proxy, not an aim-assist check.
+const FLANK_VIEW_COS_THRESHOLD = 0.5;
+// Comparable to a real duel-tier score (ENGAGING_CAP is 45) so a genuine
+// unnoticed angle stands out over ambient proximity/decay noise without
+// outweighing an actual live exchange.
+const FLANK_POTENTIAL_MAX = 45;
+// Cosine of roughly a ±32° cone — much tighter than FLANK_VIEW_COS_THRESHOLD,
+// since this checks whether a shot was actually aimed toward an enemy, not
+// just "facing their general direction." Loose enough to tolerate recoil
+// spread and a tick of position/forward lag, tight enough that spraying a
+// wall 90° off from an enemy doesn't count.
+const SHOOTING_AT_ENEMY_COS_THRESHOLD = 0.85;
+
+function dot(a: Vec3, b: Vec3): number {
+  return a.x * b.x + a.y * b.y + a.z * b.z;
+}
+
+function normalize(v: Vec3): Vec3 | undefined {
+  const length = Math.sqrt(v.x * v.x + v.y * v.y + v.z * v.z);
+  if (length === 0) return undefined;
+  return { x: v.x / length, y: v.y / length, z: v.z / length };
+}
+
+/**
+ * True if `looker` (standing at `lookerPos`) is facing toward `targetPos`
+ * within `cosThreshold` of dead-on. GSI's `forward` is a normalized
+ * view-direction vector present for every player while spectating (see the
+ * "Every player has a single continuous score" doc comment above) — dotted
+ * against the direction to the target. Defaults to
+ * FLANK_VIEW_COS_THRESHOLD's wide "generally aware of that direction" cone;
+ * isShootingTowardEnemy passes the tighter SHOOTING_AT_ENEMY_COS_THRESHOLD
+ * instead when it needs something closer to an actual aim check.
+ */
+function isFacingToward(looker: GsiPlayer, lookerPos: Vec3, targetPos: Vec3, cosThreshold = FLANK_VIEW_COS_THRESHOLD): boolean {
+  const forward = parsePosition(looker.forward);
+  if (!forward) return false;
+  const toTarget = normalize({ x: targetPos.x - lookerPos.x, y: targetPos.y - lookerPos.y, z: targetPos.z - lookerPos.z });
+  if (!toTarget) return false;
+  return dot(forward, toTarget) >= cosThreshold;
+}
+
+/**
+ * True if `player` currently has an alive enemy within PROXIMITY_RANGE_UNITS
+ * that they're roughly aimed toward — the tighter-cone counterpart to
+ * isFacingToward's general awareness check, used to tell an actual exchange
+ * apart from firing with nobody in the crosshair (see
+ * ENGAGING_SHOOTING_AT_ENEMY_BONUS).
+ */
+function isShootingTowardEnemy(player: GsiPlayer, allplayers: Record<string, GsiPlayer>): boolean {
+  const pos = parsePosition(player.position);
+  if (!pos) return false;
+
+  const enemyTeam: "CT" | "T" = player.team === "CT" ? "T" : "CT";
+  for (const other of Object.values(allplayers)) {
+    if (other.team !== enemyTeam || (other.state?.health ?? 0) <= 0) continue;
+    const otherPos = parsePosition(other.position);
+    if (!otherPos) continue;
+    if (distance3d(pos, otherPos) > PROXIMITY_RANGE_UNITS) continue;
+    if (isFacingToward(player, pos, otherPos, SHOOTING_AT_ENEMY_COS_THRESHOLD)) return true;
+  }
+  return false;
+}
+
+/**
+ * A player has flank potential against a specific enemy when they're
+ * within FLANK_RANGE_UNITS, facing roughly toward that enemy, and the
+ * enemy is *not* facing back toward them — "I can see where they are and
+ * they don't know I'm here." Only the single strongest (closest)
+ * qualifying pairing counts per player rather than summing across every
+ * enemy that qualifies, so standing near a whole unaware group (like a
+ * stacked bomb-site push) doesn't rack up an unbounded score just from
+ * headcount — one good angle is one good angle regardless of how many
+ * targets are on it.
+ */
+function bumpFlankPotential(alivePlayers: [string, GsiPlayer][], bump: BumpFn): void {
+  const withPos = alivePlayers
+    .map(([steamId, player]) => ({ steamId, player, pos: parsePosition(player.position) }))
+    .filter((p): p is { steamId: string; player: GsiPlayer; pos: Vec3 } => p.pos !== undefined);
+
+  const ctPlayers = withPos.filter((p) => p.player.team === "CT");
+  const tPlayers = withPos.filter((p) => p.player.team === "T");
+
+  const best = new Map<string, number>();
+  const consider = (steamId: string, amount: number) => {
+    if (amount > (best.get(steamId) ?? 0)) best.set(steamId, amount);
+  };
+
+  for (const a of ctPlayers) {
+    for (const b of tPlayers) {
+      const closeness = 1 - distance3d(a.pos, b.pos) / FLANK_RANGE_UNITS;
+      if (closeness <= 0) continue;
+
+      const aFacingB = isFacingToward(a.player, a.pos, b.pos);
+      const bFacingA = isFacingToward(b.player, b.pos, a.pos);
+
+      if (aFacingB && !bFacingA) consider(a.steamId, FLANK_POTENTIAL_MAX * closeness);
+      if (bFacingA && !aFacingB) consider(b.steamId, FLANK_POTENTIAL_MAX * closeness);
+    }
+  }
+
+  for (const [steamId, amount] of best) {
+    bump(steamId, amount, "FLANK_POTENTIAL");
   }
 }
 
@@ -547,6 +681,7 @@ function computeRankedScores(current: GsiPayload, now: number): ObserverQueueIte
   bumpClutch("CT", countAlive(allplayers, "CT"), countAlive(allplayers, "T"), allplayers, bump);
   bumpClutch("T", countAlive(allplayers, "T"), countAlive(allplayers, "CT"), allplayers, bump);
   bumpProximity(alivePlayers, bump);
+  bumpFlankPotential(alivePlayers, bump);
   bumpStacks(current, alivePlayers, now, bump);
   bumpBombDefuse(current, allplayers, bump);
 
