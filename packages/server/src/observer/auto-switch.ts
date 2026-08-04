@@ -10,12 +10,27 @@ let suppressUntil = 0;
 // scores fluctuate continuously (see gsi/observer.ts), so picking strictly
 // the highest score every tick with no hysteresis would mean the camera
 // cuts on every minor fluctuation between two close players.
-const SWITCH_MARGIN = 50;
+const SWITCH_MARGIN = 25;
 const MIN_DWELL_MS = 2_000;
 
 export function resetAutoSwitchState(): void {
   currentSteamId = null;
   lastSwitchAt = 0;
+}
+
+/**
+ * Used when something outside the normal ranked-queue flow (currently: the
+ * bomb-plant cinematic cam redirecting to whoever just opened fire on the
+ * planter) cuts the camera to a specific player directly, bypassing
+ * maybeAutoSwitch entirely. Recording it here — rather than leaving
+ * currentSteamId stale or calling resetAutoSwitchState() — is what makes
+ * the margin/dwell hysteresis apply from this cut onward instead of from
+ * whatever the last real auto-switch was, so the camera doesn't
+ * immediately re-evaluate against a target it never actually switched to.
+ */
+export function setAutoSwitchTarget(steamId: string): void {
+  currentSteamId = steamId;
+  lastSwitchAt = Date.now();
 }
 
 /**

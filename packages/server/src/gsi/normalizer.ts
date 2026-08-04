@@ -64,6 +64,12 @@ export function normalizeGsiPayload(current: GsiPayload, previous: GsiPayload | 
     if (currBomb === "defusing") events.push({ type: "bomb_defusing", timestamp, playerSteamId: current.bomb?.player });
     if (currBomb === "defused") events.push({ type: "bomb_defused", timestamp, playerSteamId: current.bomb?.player });
     if (currBomb === "exploded") events.push({ type: "bomb_exploded", timestamp });
+    // A plant that was interrupted (planter killed, or just let go of use)
+    // goes "planting" -> "carried"/"dropped" instead of "planted" — there's
+    // no dedicated GSI event for this, only the state reverting.
+    if (prevBomb === "planting" && currBomb !== "planted") {
+      events.push({ type: "bomb_plant_canceled", timestamp, playerSteamId: current.bomb?.player });
+    }
   }
 
   const prevPlayers = previous.allplayers ?? {};

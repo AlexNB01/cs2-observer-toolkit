@@ -1,9 +1,17 @@
 import type { FastifyInstance } from "fastify";
 import type { GsiPayload } from "@cs2hud/shared";
 import { normalizeGsiPayload } from "./normalizer.js";
-import { processObserverEvents } from "./observer.js";
+import { getLastTickShooters, processObserverEvents } from "./observer.js";
 import { readHudSettings } from "../db/hud-settings-store.js";
-import { maybeRunCinematicSequence, maybeShowBombDefuseShot, maybeShowBombPlantShot, maybeShowQuietMomentShot, recordRoundEnd } from "../cinematic/scheduler.js";
+import {
+  cancelBombPlantShot,
+  maybeRedirectToShooterDuringBombPlant,
+  maybeRunCinematicSequence,
+  maybeShowBombDefuseShot,
+  maybeShowBombPlantShot,
+  maybeShowQuietMomentShot,
+  recordRoundEnd,
+} from "../cinematic/scheduler.js";
 import { maybeAutoSwitch, resetAutoSwitchState } from "../observer/auto-switch.js";
 import { broadcast } from "../ws/hub.js";
 import { db } from "../db/client.js";
@@ -81,7 +89,11 @@ export function registerGsiListener(app: FastifyInstance): void {
       }
 
       if (event.type === "bomb_planting") {
-        maybeShowBombPlantShot(payload.map?.name, payload.bomb?.position, settings.cinematicBombPlantShotsEnabled);
+        maybeShowBombPlantShot(payload, settings.cinematicBombPlantShotsEnabled);
+      }
+
+      if (event.type === "bomb_plant_canceled") {
+        cancelBombPlantShot();
       }
 
       if (event.type === "bomb_defusing") {
@@ -98,6 +110,7 @@ export function registerGsiListener(app: FastifyInstance): void {
     }
 
     processObserverEvents(events, payload, settings.smartObserverEnabled);
+    maybeRedirectToShooterDuringBombPlant(getLastTickShooters(), payload);
     maybeShowQuietMomentShot(payload, settings.cinematicQuietMomentShotsEnabled);
 
     if (settings.smartObserverEnabled && settings.autoSwitchInsideCs2) {

@@ -22,9 +22,13 @@ involved.
 2. Open the app → **GSI Setup** → set your CS2 install's `game/csgo/cfg` folder (use
    **Browse...** or paste the path) → **Install `gamestate_integration_cs2hud.cfg` into
    CS2** → restart CS2. The page shows "Receiving GSI data" once it's working.
-3. Add `-netconport 2121` to CS2's Steam launch options (Properties → General → Launch
-   Options) and relaunch CS2 — this is what lets the app move your camera. The port must
-   match the one set on the **Smart Auto Observer** page (2121 by default).
+3. Add `-netconport 2121 -insecure` to CS2's Steam launch options (Properties → General →
+   Launch Options) and relaunch CS2. `-netconport` is what lets the app move your camera;
+   `-insecure` is also required — CS2 blocks the netconsole port under VAC, so without it
+   the app can't send any commands even though the port is open. The port must match the
+   one set on the **Smart Auto Observer** page (2121 by default). Note that `-insecure`
+   disables VAC for that session, so it's meant for practice servers/demos/scrims, not
+   official VAC-secured matchmaking.
 4. On **Smart Auto Observer**, turn on the toggle (and "Auto-switch inside CS2" once
    netconsole shows connected). Optionally capture cinematic camera shots per map: in
    CS2, `spec_mode 6`, fly to a spot, run `spec_pos`, and paste the printed
@@ -40,20 +44,24 @@ reinstalling — see **Backup** on the GSI Setup page to export/import them as a
 ## How the camera logic works
 
 Every GSI tick, `packages/server/src/gsi/observer.ts` scores every alive player from a
-mix of discrete events (kills, headshots, multi-kills, trades — decaying over a few
-seconds) and situational conditions recomputed fresh each tick (clutch state, bomb
-plant/defuse, proximity to an enemy, an incoming grenade, a coordinated team push,
-burning, low HP). `observer/auto-switch.ts` picks whoever's on top, but only actually
-cuts once they clearly beat the current player by a margin and a minimum dwell time has
-passed — this is what keeps the camera from thrashing between near-tied scores.
+mix of discrete events (kills, headshots, multi-kills, trades, shots fired — decaying
+over a few seconds, and weighted higher when fired with an enemy nearby) and situational
+conditions recomputed fresh each tick (clutch state, bomb plant/defuse, proximity to an
+enemy, an incoming grenade, a coordinated team push, burning, low HP).
+`observer/auto-switch.ts` picks whoever's on top, but only actually cuts once they beat
+the current player by a margin and a minimum dwell time has passed — this is what keeps
+the camera from thrashing between near-tied scores.
 
 Cinematic shots (`cinematic/scheduler.ts`) briefly take over the camera for freezetime,
-a bomb plant/uncontested defuse, or a quiet moment, then hand control back.
+a bomb plant/uncontested defuse, or a quiet moment, then hand control back. The bomb-plant
+shot cuts itself short early if the plant gets interrupted, or if someone opens fire on
+the planter — in that case the camera cuts straight to the shooter instead of waiting out
+the rest of the establishing shot.
 
 ## Requirements
 
 - Windows, with Counter-Strike 2 installed
-- For auto-switch: CS2 launched with the `-netconport <port>` option (see above)
+- For auto-switch: CS2 launched with `-netconport <port> -insecure` (see above)
 - For HLAE features: [HLAE](https://www.hlae.online/) downloaded separately
 
 ## Development

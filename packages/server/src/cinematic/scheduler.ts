@@ -2,7 +2,7 @@ import type { CinematicCameraShot, CinematicShot, GsiPayload } from "@cs2hud/sha
 import { listCinematicShots } from "../db/cinematic-store.js";
 import { broadcast } from "../ws/hub.js";
 import { sendConsoleCommand, specPlayerByName } from "../observer/netconsole.js";
-import { resetAutoSwitchState, suppressAutoSwitchUntil } from "../observer/auto-switch.js";
+import { resetAutoSwitchState, setAutoSwitchTarget, suppressAutoSwitchUntil } from "../observer/auto-switch.js";
 import { getObserverQueue } from "../gsi/observer.js";
 import { aliasName } from "./cfg.js";
 
@@ -22,6 +22,17 @@ const QUIET_PRESENCE_RADIUS_UNITS = 700;
 
 let lastRoundWinner: "CT" | "T" | null = null;
 let lastCinematicActivityAt = 0;
+
+// Tracks the bomb-plant establishing shot specifically (not freezetime/
+// defuse/quiet-moment) so it can be cut short from outside its own
+// setTimeout: either canceled outright (the plant got interrupted before
+// finishing — see cancelBombPlantShot) or overridden by a shooter cutting
+// loose on the planter (see maybeRedirectToShooterDuringBombPlant). Neither
+// case applies to the defuse shot: it only ever fires once the enemy team
+// is already fully dead, so there's nobody left who could cancel it or
+// shoot at the defuser.
+let bombPlantHandback: ReturnType<typeof setTimeout> | null = null;
+let activeBombPlant: { planterSteamId: string; enemyTeam: "CT" | "T" } | null = null;
 
 /** Called on every round_end so the next freezetime knows which side to show first. */
 export function recordRoundEnd(winningTeam?: "CT" | "T"): void {
@@ -80,8 +91,21 @@ function fireShot(shot: CinematicShot, trigger: "freezetime" | "bomb_plant" | "b
   lastCinematicActivityAt = Date.now();
 }
 
-/** Shared by the plant and defuse triggers: cut to whichever captured shot (any slot) is nearest `position`, then hand back after durationMs. */
-function showNearestBombSiteShot(mapName: string, position: Vec3, trigger: "bomb_plant" | "bomb_defuse", durationMs: number): void {
+/**
+ * Shared by the plant and defuse triggers: cut to whichever captured shot
+ * (any slot) is nearest `position`, then hand back after durationMs.
+ * `bombPlantContext` is only passed for the plant trigger — it records who's
+ * planting and their enemy team so cancelBombPlantShot/
+ * maybeRedirectToShooterDuringBombPlant can find and cut short this exact
+ * shot later, before its own timer would otherwise hand back naturally.
+ */
+function showNearestBombSiteShot(
+  mapName: string,
+  position: Vec3,
+  trigger: "bomb_plant" | "bomb_defuse",
+  durationMs: number,
+  bombPlantContext?: { planterSteamId: string; enemyTeam: "CT" | "T" }
+): void {
   let nearest: { shot: CinematicShot; distance: number } | null = null;
   for (const shot of listCinematicShots(mapName)) {
     const distance = distance3d(position, shot.shot);
@@ -92,7 +116,63 @@ function showNearestBombSiteShot(mapName: string, position: Vec3, trigger: "bomb
 
   suppressAutoSwitchUntil(Date.now() + durationMs + 500);
   fireShot(nearest.shot, trigger);
-  setTimeout(handBackToObserver, durationMs);
+
+  if (bombPlantContext) {
+    activeBombPlant = bombPlantContext;
+    bombPlantHandback = setTimeout(() => {
+      activeBombPlant = null;
+      bombPlantHandback = null;
+      handBackToObserver();
+    }, durationMs);
+  } else {
+    setTimeout(handBackToObserver, durationMs);
+  }
+}
+
+/**
+ * Called on bomb_plant_canceled (the plant interrupted before finishing —
+ * planter killed, or they just let go of use). Only does anything if the
+ * bomb-plant establishing shot is still actually on screen; cuts it short
+ * immediately instead of waiting out BOMB_PLANT_SHOT_DURATION_MS staring at
+ * a bomb site nobody's planting at anymore.
+ */
+export function cancelBombPlantShot(): void {
+  if (bombPlantHandback === null) return;
+  clearTimeout(bombPlantHandback);
+  bombPlantHandback = null;
+  activeBombPlant = null;
+  suppressAutoSwitchUntil(0);
+  handBackToObserver();
+}
+
+/**
+ * Called every GSI tick with whoever's ammo_clip just dropped (see
+ * gsi/observer.ts's getLastTickShooters). If the bomb-plant establishing
+ * shot is currently up and one of this tick's shooters is on the planter's
+ * enemy team, someone's actively contesting the plant — cut straight to
+ * them instead of sitting on the site shot for the rest of its duration.
+ * Bypasses handBackToObserver (which would just re-pick the ranked queue's
+ * current top, not necessarily the shooter) and instead cuts directly to
+ * the shooter and seeds auto-switch's hysteresis with them via
+ * setAutoSwitchTarget, so the camera doesn't immediately re-evaluate away
+ * from a cut it just made.
+ */
+export function maybeRedirectToShooterDuringBombPlant(shooterSteamIds: string[], payload: GsiPayload): void {
+  if (!activeBombPlant) return;
+  const enemyTeam = activeBombPlant.enemyTeam;
+  const shooterId = shooterSteamIds.find((id) => payload.allplayers?.[id]?.team === enemyTeam);
+  if (!shooterId) return;
+  const shooter = payload.allplayers?.[shooterId];
+  if (!shooter) return;
+
+  if (bombPlantHandback !== null) clearTimeout(bombPlantHandback);
+  bombPlantHandback = null;
+  activeBombPlant = null;
+  suppressAutoSwitchUntil(0);
+
+  sendConsoleCommand("spec_mode 1");
+  specPlayerByName(shooter.name);
+  setAutoSwitchTarget(shooterId);
 }
 
 /**
@@ -133,13 +213,25 @@ export function maybeRunCinematicSequence(mapName: string | undefined, roundNumb
  * Called on bomb_planting (the plant *starting*, not finishing — the ~3s
  * plant animation itself is the moment worth cutting to an establishing
  * shot for, not just the aftermath) — cuts to whichever captured shot (any
- * slot) is nearest the plant, then hands back.
+ * slot) is nearest the plant, then hands back. Also records the planter and
+ * their enemy team so cancelBombPlantShot/maybeRedirectToShooterDuringBombPlant
+ * can react while this shot is up.
  */
-export function maybeShowBombPlantShot(mapName: string | undefined, bombPosition: string | undefined, enabled: boolean): void {
-  if (!enabled || !mapName) return;
-  const plantPos = parsePosition(bombPosition);
-  if (!plantPos) return;
-  showNearestBombSiteShot(mapName, plantPos, "bomb_plant", BOMB_PLANT_SHOT_DURATION_MS);
+export function maybeShowBombPlantShot(payload: GsiPayload, enabled: boolean): void {
+  if (!enabled) return;
+  const mapName = payload.map?.name;
+  const bomb = payload.bomb;
+  if (!mapName || !bomb?.player) return;
+
+  const planter = payload.allplayers?.[bomb.player];
+  const plantPos = parsePosition(bomb.position);
+  if (!planter || !plantPos) return;
+
+  const enemyTeam: "CT" | "T" = planter.team === "CT" ? "T" : "CT";
+  showNearestBombSiteShot(mapName, plantPos, "bomb_plant", BOMB_PLANT_SHOT_DURATION_MS, {
+    planterSteamId: bomb.player,
+    enemyTeam,
+  });
 }
 
 /**

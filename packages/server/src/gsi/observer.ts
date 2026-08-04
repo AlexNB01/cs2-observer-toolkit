@@ -33,6 +33,13 @@ const TRADE_BONUS = 30;
 const CLUTCH_WIN_BASE_BONUS = 40;
 const CLUTCH_WIN_BONUS_PER_ENEMY = 20;
 const ENGAGING_SHOT_BOOST = 10;
+// Extra per-shot boost when an alive enemy is within PROXIMITY_RANGE_UNITS
+// at the moment of firing — the closest GSI-derivable proxy for "shooting
+// at the enemy" rather than just "shooting" (no line-of-sight/aim data
+// exists to do better). Sprays with nobody nearby only ever get the base
+// boost, so a real exchange stands out and the camera is less likely to
+// miss it.
+const ENGAGING_ENEMY_NEARBY_BONUS = 15;
 // Hard ceiling on the engaging (shots-fired) contribution, independent of
 // weapon fire rate or magazine size. Without this, a high-RPM/large-mag
 // weapon (Negev: ~750rpm, 150-round mag) held on full auto into a wall
@@ -40,8 +47,11 @@ const ENGAGING_SHOT_BOOST = 10;
 // (halfLife/ln2) ≈ 12.5 * 10 * 7.2s ≈ 900 — comfortably clutch-tier —
 // just from spraying, with nobody actually being fought. Capping the
 // *decayed value* at read time bounds that regardless of rate or
-// duration; it can't be raised by firing faster or longer.
-const ENGAGING_CAP = 30;
+// duration; it can't be raised by firing faster or longer. Raised
+// alongside ENGAGING_ENEMY_NEARBY_BONUS so a genuine firefight (boost +
+// bonus per shot) can actually separate itself from a lone wall-spray
+// (boost only) instead of both saturating the same ceiling equally fast.
+const ENGAGING_CAP = 45;
 
 const CLUTCH_SITUATIONAL_BASE = 1000;
 const CLUTCH_SITUATIONAL_PER_ENEMY = 10;
@@ -120,6 +130,7 @@ let lastAmmoByPlayer = new Map<string, AmmoRecord>();
 let lastPositions = new Map<string, PositionSample>();
 let latestAliveSteamIds = new Set<string>();
 let lastBroadcastAt = 0;
+let lastTickShooters: string[] = [];
 
 /** Current ranked list — recomputed every tick in processObserverEvents, not consumed/removed by auto-switch. */
 export function getObserverQueue(): ObserverQueueItem[] {
@@ -138,6 +149,17 @@ export function isPlayerAlive(steamId: string): boolean {
   return latestAliveSteamIds.has(steamId);
 }
 
+/**
+ * Whoever's ammo_clip dropped on the tick just processed — used by
+ * cinematic/scheduler.ts to redirect the bomb-plant cam to whoever just
+ * opened fire on the planter (see maybeRedirectToShooterDuringBombPlant),
+ * independent of and in addition to the decaying ENGAGING score these same
+ * shots feed into computeRankedScores.
+ */
+export function getLastTickShooters(): string[] {
+  return lastTickShooters;
+}
+
 export function resetObserverState(): void {
   latestScores = [];
   recentDeaths = [];
@@ -147,6 +169,7 @@ export function resetObserverState(): void {
   lastPositions = new Map();
   latestAliveSteamIds = new Set();
   lastBroadcastAt = 0;
+  lastTickShooters = [];
 }
 
 /**
@@ -161,7 +184,10 @@ export function resetObserverState(): void {
  * no need to push that at full GSI frequency.
  */
 export function processObserverEvents(events: NormalizedEvent[], current: GsiPayload, enabled: boolean): void {
-  if (!enabled) return;
+  if (!enabled) {
+    lastTickShooters = [];
+    return;
+  }
 
   const now = Date.now();
   let hadDiscreteEvent = false;
@@ -176,10 +202,11 @@ export function processObserverEvents(events: NormalizedEvent[], current: GsiPay
     }
   }
 
-  const shotFired = updateEngagingScores(current, now);
+  const shooters = updateEngagingScores(current, now);
+  lastTickShooters = shooters;
   latestScores = computeRankedScores(current, now);
 
-  if (hadDiscreteEvent || shotFired || now - lastBroadcastAt >= BROADCAST_MIN_INTERVAL_MS) {
+  if (hadDiscreteEvent || shooters.length > 0 || now - lastBroadcastAt >= BROADCAST_MIN_INTERVAL_MS) {
     lastBroadcastAt = now;
     broadcast({ kind: "observer_queue_updated", queue: latestScores });
   }
@@ -246,9 +273,25 @@ function countAlive(allplayers: Record<string, GsiPlayer>, team: "CT" | "T"): nu
  * switch just re-baselines the tracked ammo count rather than counting as
  * a shot.
  */
-function updateEngagingScores(current: GsiPayload, now: number): boolean {
+/** True if `player` has an alive enemy within PROXIMITY_RANGE_UNITS right now — see ENGAGING_ENEMY_NEARBY_BONUS. */
+function hasNearbyEnemy(player: GsiPlayer, allplayers: Record<string, GsiPlayer>): boolean {
+  const pos = parsePosition(player.position);
+  if (!pos) return false;
+
+  const enemyTeam: "CT" | "T" = player.team === "CT" ? "T" : "CT";
+  for (const other of Object.values(allplayers)) {
+    if (other.team !== enemyTeam || (other.state?.health ?? 0) <= 0) continue;
+    const otherPos = parsePosition(other.position);
+    if (!otherPos) continue;
+    if (distance3d(pos, otherPos) <= PROXIMITY_RANGE_UNITS) return true;
+  }
+  return false;
+}
+
+/** Returns the steamIds of everyone whose ammo_clip dropped this tick — see getLastTickShooters. */
+function updateEngagingScores(current: GsiPayload, now: number): string[] {
   const allplayers = current.allplayers ?? {};
-  let fired = false;
+  const shooters: string[] = [];
 
   for (const [steamId, player] of Object.entries(allplayers)) {
     const alive = (player.state?.health ?? 0) > 0;
@@ -267,12 +310,13 @@ function updateEngagingScores(current: GsiPayload, now: number): boolean {
     lastAmmoByPlayer.set(steamId, { weaponName: activeWeapon.name, ammoClip: activeWeapon.ammo_clip });
 
     if (shotFired) {
-      accumulateScore(engagingEventScores, steamId, ENGAGING_SHOT_BOOST, "ENGAGING", now);
-      fired = true;
+      const boost = ENGAGING_SHOT_BOOST + (hasNearbyEnemy(player, allplayers) ? ENGAGING_ENEMY_NEARBY_BONUS : 0);
+      accumulateScore(engagingEventScores, steamId, boost, "ENGAGING", now);
+      shooters.push(steamId);
     }
   }
 
-  return fired;
+  return shooters;
 }
 
 function handleKill(kill: KillEvent, current: GsiPayload, now: number): void {
