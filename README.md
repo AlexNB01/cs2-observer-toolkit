@@ -33,9 +33,9 @@ involved.
    netconsole shows connected). Optionally capture cinematic camera shots per map: in
    CS2, `spec_mode 6`, fly to a spot, run `spec_pos`, and paste the printed
    `x y z pitch yaw` into the app.
-5. On **HLAE**, point it at your `HLAE.exe` (from [hlae.online](https://www.hlae.online/)
-   — not bundled here), pick CT/T colors, and use "Write sync.cfg" once players have
-   joined.
+5. On **HLAE**, point it at your `HLAE.exe` (from
+   [advancedfx/advancedfx](https://github.com/advancedfx/advancedfx) — not bundled here),
+   pick CT/T colors, and use "Write sync.cfg" once players have joined.
 
 All settings and captured camera shots persist locally in SQLite and survive
 reinstalling — see **Backup** on the GSI Setup page to export/import them as a file
@@ -67,7 +67,7 @@ and the server ignores the setting for now.
 
 - Windows, with Counter-Strike 2 installed
 - For auto-switch: CS2 launched with `-netconport <port> -insecure` (see above)
-- For HLAE features: [HLAE](https://www.hlae.online/) downloaded separately
+- For HLAE features: [HLAE](https://github.com/advancedfx/advancedfx) downloaded separately
 
 ## Development
 
