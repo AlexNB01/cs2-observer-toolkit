@@ -85,9 +85,7 @@ Recomputed fresh every tick from whatever's true *right now*:
   for walls.
 - **Flank potential** — up to 45 when a player is within 1000 units of an enemy, facing
   roughly toward them, while that enemy *isn't* facing back. Uses GSI's `forward`
-  view-direction field, available because this app runs as a spectator client — a live
-  playing client never gets it, since it'd be a wallhack. Independent of anyone's
-  remaining life count.
+  view-direction field. Independent of anyone's remaining life count.
 - **Coordinated pushes** — 3+ teammates moving together (not just standing near each
   other) score a bump: 80 for the bomb carrier if the T side is stacked while still
   carrying (not yet planting), 35 for every player in a stacked CT rotate/retake.
