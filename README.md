@@ -5,8 +5,9 @@ live match state from CS2's Game State Integration (GSI) feed and uses it to:
 
 - **Automatically switch the spectator camera** to whoever's doing something interesting
   (duels, clutches, multi-kills, bomb plants/defuses, coordinated pushes, ...).
-- **Cut to cinematic establishing shots** you capture yourself (map spawns, bomb sites,
-  mid) at freezetime or on an uncontested bomb plant/defuse.
+- **Cut to cinematic HLAE `mirv_campath` camera shots** at freezetime — import a moving
+  camera path per CT/T spawn and the app plays it automatically, normalized to a fixed
+  length so both sides get roughly equal screen time.
 - **Drive HLAE** (killfeed/glow/trail colors, x-ray, above-head info, smokes) from one
   place, synced to the same colors as the auto-switch camera.
 
@@ -22,17 +23,19 @@ drives the camera over CS2's own console (`-netconport`).
 2. Open the app → **GSI Setup** → set your CS2 install's `game/csgo/cfg` folder (use
    **Browse...** or paste the path) → **Install `gamestate_integration_cs2hud.cfg` into
    CS2** → restart CS2. The page shows "Receiving GSI data" once it's working.
-3. Add `-netconport 2121 -insecure` to CS2's Steam launch options (Properties → General →
+3. Add `-netconport 54545 -insecure` to CS2's Steam launch options (Properties → General →
    Launch Options) and relaunch CS2. `-netconport` is what lets the app move your camera;
    `-insecure` is also required — CS2 blocks the netconsole port under VAC, so without it
-   the app can't send any commands even though the port is open. The port must match the
-   one set on the **Smart Auto Observer** page (2121 by default). Note that `-insecure`
-   disables VAC for that session, so it's meant for practice servers/demos/scrims, not
-   official VAC-secured matchmaking.
+   the app can't send any commands even though the port is open. The port number itself is
+   arbitrary — just make sure it matches whatever's set on the **Smart Auto Observer**
+   page. Note that `-insecure` disables VAC for that session, so it's meant for practice
+   servers/demos/scrims, not official VAC-secured matchmaking.
 4. On **Smart Auto Observer**, turn on the toggle (and "Auto-switch inside CS2" once
-   netconsole shows connected). Optionally capture cinematic camera shots per map: in
-   CS2, `spec_mode 6`, fly to a spot, run `spec_pos`, and paste the printed
-   `x y z pitch yaw` into the app.
+   netconsole shows connected). Optionally add cinematic camera shots per map: build a
+   camera path in HLAE's own campath editor, save it as a `.campath` file
+   (`mirv_campath save`), then click "Load campath" in the app and pick that file — no
+   in-game coordinate capture needed, the app derives everything it needs from the path
+   itself.
 5. On **HLAE**, point it at your `HLAE.exe` (from
    [advancedfx/advancedfx](https://github.com/advancedfx/advancedfx) — not bundled here),
    pick CT/T colors, and use "Write & apply sync.cfg" once players have joined. This
@@ -98,15 +101,18 @@ Recomputed fresh every tick from whatever's true *right now*:
 ### Cinematic shots
 
 `packages/server/src/cinematic/scheduler.ts` briefly takes the camera away from the
-ranked-list logic above for freezetime or an uncontested bomb plant/defuse, then hands
-control back. The bomb-plant shot is skipped entirely if a CT is already close to the
-site when the plant starts, and cuts itself short early if the plant gets interrupted or
-if someone opens fire on the planter mid-shot — in that case the camera cuts straight to
-the shooter instead of waiting out the rest of the establishing shot.
+ranked-list logic above at freezetime, playing an imported `mirv_campath` camera path for
+whichever CT/T spawn shot is up (winner's side first), then hands control back once both
+have played. Every imported path is rescaled to a fixed 8s on import — speeding up a
+longer recording or slowing down a shorter one, never skipping a keyframe — so the
+sequence stays predictable regardless of how long the original recording session ran. If
+the server's actual freezetime turns out shorter than that combined length, the sequence
+cuts to a clean hand-back on `round_start` instead of getting interrupted mid-motion.
 
-Quiet-moment filler shots (cutting to a point-of-interest camera during a lull) are
-implemented but currently disabled for all users — the toggle is hidden in the admin UI
-and the server ignores the setting for now.
+Bomb-plant/defuse establishing shots and quiet-moment filler shots (cutting to a
+point-of-interest camera during a lull) are both implemented but currently disabled for
+all users — their toggles are hidden in the admin UI and the server ignores the settings
+for now.
 
 ## Requirements
 
