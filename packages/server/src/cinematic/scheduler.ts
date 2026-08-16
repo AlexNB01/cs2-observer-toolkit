@@ -1,10 +1,10 @@
-import type { CinematicCameraShot, CinematicShot, GsiPayload } from "@cs2hud/shared";
+import type { CinematicShot, GsiPayload } from "@cs2hud/shared";
 import { listCinematicShots } from "../db/cinematic-store.js";
 import { broadcast } from "../ws/hub.js";
 import { sendConsoleCommand, specPlayerByName } from "../observer/netconsole.js";
 import { resetAutoSwitchState, setAutoSwitchTarget, suppressAutoSwitchUntil } from "../observer/auto-switch.js";
 import { getObserverQueue } from "../gsi/observer.js";
-import { aliasName } from "./cfg.js";
+import { aliasName, shotCommand } from "./cfg.js";
 
 const SHOT_GAP_MS = 5000; // freezetime sequence: time each of the 2 shots stays up
 const BOMB_PLANT_SHOT_DURATION_MS = 4000; // roughly matches the ~3.2s plant animation
@@ -17,7 +17,7 @@ const BOMB_DEFUSE_SHOT_DURATION_NO_KIT_MS = 10_000;
 const BOMB_SITE_MAX_DISTANCE_UNITS = 1500; // skip if no captured shot is anywhere near the plant/defuse
 // If a CT is already this close when the plant starts, the site is
 // contested right from the start — skip the establishing shot entirely
-// rather than risk missing the retake fight while staring at a static cam
+// rather than risk missing the retake fight while staring at an establishing shot
 // (the same reasoning as maybeShowBombDefuseShot only firing when the
 // defuse is uncontested, just checked at the start instead of throughout).
 // Tighter than observer.ts's PROXIMITY_RANGE_UNITS (1200, "somewhere in the
@@ -54,13 +54,30 @@ let quietSince: number | null = null;
 let bombPlantHandback: ReturnType<typeof setTimeout> | null = null;
 let activeBombPlant: { planterSteamId: string; enemyTeam: "CT" | "T" } | null = null;
 
+// Pending timers for the freezetime CT/T sequence (see
+// maybeRunCinematicSequence) — cleared and handed back immediately on
+// round_start (see cancelFreezetimeSequence). The sequence's own total
+// duration is a wall-clock guess (each shot's actual camera-path length,
+// summed) that has no relationship to the server's real mp_freezetime —
+// GSI never exposes that cvar — so a couple of long camera paths can
+// easily add up to more than freezetime actually lasts. Without this, the
+// second shot would get cut short by whatever else reacts to the round
+// going live, rather than a clean, intentional hand-back timed to the
+// genuine end of freezetime.
+let freezetimeSequenceTimers: ReturnType<typeof setTimeout>[] = [];
+
 /** Called on every round_end so the next freezetime knows which side to show first. */
 export function recordRoundEnd(winningTeam?: "CT" | "T"): void {
   if (winningTeam) lastRoundWinner = winningTeam;
 }
 
-function specGotoCommand(shot: CinematicCameraShot): string {
-  return `spec_mode 6; spec_goto ${shot.x} ${shot.y} ${shot.z} ${shot.pitch} ${shot.yaw}`;
+/** Called on round_start — ends the freezetime sequence right now if any of it is still pending/on screen. */
+export function cancelFreezetimeSequence(): void {
+  if (freezetimeSequenceTimers.length === 0) return;
+  for (const t of freezetimeSequenceTimers) clearTimeout(t);
+  freezetimeSequenceTimers = [];
+  suppressAutoSwitchUntil(0);
+  handBackToObserver();
 }
 
 interface Vec3 {
@@ -97,6 +114,7 @@ function distance3d(a: Vec3, b: Vec3): number {
  * ticks too.
  */
 function handBackToObserver(): void {
+  sendConsoleCommand("mirv_campath enabled 0");
   const top = getObserverQueue()[0];
   if (top) {
     sendConsoleCommand("spec_mode 1");
@@ -105,10 +123,41 @@ function handBackToObserver(): void {
   resetAutoSwitchState();
 }
 
-function fireShot(shot: CinematicShot, trigger: "freezetime" | "bomb_plant" | "bomb_defuse" | "quiet_moment"): void {
-  const autoTriggered = sendConsoleCommand(specGotoCommand(shot.shot));
+function fireShot(shot: CinematicShot, trigger: "freezetime" | "bomb_plant" | "bomb_defuse" | "quiet_moment" | "manual"): void {
+  const autoTriggered = sendConsoleCommand(shotCommand(shot));
   broadcast({ kind: "cinematic_cue", trigger, label: shot.label, execCommand: aliasName(shot), autoTriggered });
   lastCinematicActivityAt = Date.now();
+}
+
+/**
+ * How long to hold `shot` on screen before cutting away or handing back —
+ * its camera path's actual length (parsed from its keyframes at import
+ * time), so it's neither cut off mid-motion nor left sitting still once
+ * it's finished. Falls back to the trigger's usual fixed duration if the
+ * path's length couldn't be parsed.
+ */
+function shotDurationMs(shot: CinematicShot, fallbackMs: number): number {
+  return shot.campathDurationMs && shot.campathDurationMs > 0 ? shot.campathDurationMs : fallbackMs;
+}
+
+/**
+ * Fires a saved shot right now, bypassing every automatic trigger — for
+ * testing a captured shot's camera path against a live match, or
+ * for a human director cutting to it on demand instead of waiting for
+ * freezetime/bomb-plant/quiet-moment to happen to line up. Unlike the
+ * automatic triggers, there's no known duration to hold it for, so
+ * auto-switch is suppressed indefinitely rather than for a fixed window —
+ * stopManualShot() (not a timer) is what hands the camera back.
+ */
+export function fireShotManually(shot: CinematicShot): void {
+  suppressAutoSwitchUntil(Number.MAX_SAFE_INTEGER);
+  fireShot(shot, "manual");
+}
+
+/** Ends a manually-fired shot (see fireShotManually) and hands the camera back to the observer. */
+export function stopManualShot(): void {
+  suppressAutoSwitchUntil(0);
+  handBackToObserver();
 }
 
 /**
@@ -123,17 +172,22 @@ function showNearestBombSiteShot(
   mapName: string,
   position: Vec3,
   trigger: "bomb_plant" | "bomb_defuse",
-  durationMs: number,
+  fallbackDurationMs: number,
   bombPlantContext?: { planterSteamId: string; enemyTeam: "CT" | "T" }
 ): void {
   let nearest: { shot: CinematicShot; distance: number } | null = null;
   for (const shot of listCinematicShots(mapName)) {
-    const distance = distance3d(position, shot.shot);
+    // A shot whose camera path had no parseable position can't be
+    // distance-matched — it only ever fires via freezetime rotation or a
+    // manual "Fire now" click (see cinematic-store.ts's saveCinematicShot).
+    if (!shot.position) continue;
+    const distance = distance3d(position, shot.position);
     if (distance > BOMB_SITE_MAX_DISTANCE_UNITS) continue;
     if (!nearest || distance < nearest.distance) nearest = { shot, distance };
   }
   if (!nearest) return;
 
+  const durationMs = shotDurationMs(nearest.shot, fallbackDurationMs);
   suppressAutoSwitchUntil(Date.now() + durationMs + 500);
   fireShot(nearest.shot, trigger);
 
@@ -190,6 +244,7 @@ export function maybeRedirectToShooterDuringBombPlant(shooterSteamIds: string[],
   activeBombPlant = null;
   suppressAutoSwitchUntil(0);
 
+  sendConsoleCommand("mirv_campath enabled 0");
   sendConsoleCommand("spec_mode 1");
   specPlayerByName(shooter.name);
   setAutoSwitchTarget(shooterId);
@@ -220,13 +275,32 @@ export function maybeRunCinematicSequence(mapName: string | undefined, roundNumb
   const second = first === "CT" ? "T" : "CT";
   const order: ("CT" | "T")[] = [first, second];
 
-  suppressAutoSwitchUntil(Date.now() + order.length * SHOT_GAP_MS + 500);
+  // Each shot's own hold time (its camera path's actual length, or
+  // SHOT_GAP_MS if that couldn't be parsed — see shotDurationMs) rather
+  // than a fixed gap, so the second shot cuts in exactly when the first
+  // one finishes instead of mid-motion or after an awkward pause.
+  const durations = order.map((team) => shotDurationMs(picks[team], SHOT_GAP_MS));
+  const totalMs = durations.reduce((sum, d) => sum + d, 0);
+  const startOffsets = durations.reduce<number[]>((offsets, d, i) => {
+    offsets.push(i === 0 ? 0 : offsets[i - 1]! + durations[i - 1]!);
+    return offsets;
+  }, []);
 
-  order.forEach((team, i) => {
-    setTimeout(() => fireShot(picks[team], "freezetime"), i * SHOT_GAP_MS);
-  });
+  suppressAutoSwitchUntil(Date.now() + totalMs + 500);
 
-  setTimeout(handBackToObserver, order.length * SHOT_GAP_MS);
+  // Clears any timers a still-running previous sequence somehow left
+  // behind (shouldn't normally happen — round_start already clears these
+  // via cancelFreezetimeSequence before the next freezetime can start —
+  // but avoids two overlapping sequences fighting over the camera if it
+  // ever does).
+  for (const t of freezetimeSequenceTimers) clearTimeout(t);
+  freezetimeSequenceTimers = order.map((team, i) => setTimeout(() => fireShot(picks[team], "freezetime"), startOffsets[i]));
+  freezetimeSequenceTimers.push(
+    setTimeout(() => {
+      freezetimeSequenceTimers = [];
+      handBackToObserver();
+    }, totalMs)
+  );
 }
 
 /**
@@ -241,7 +315,7 @@ export function maybeRunCinematicSequence(mapName: string | undefined, roundNumb
  * of the plant when it starts — that's not a clean establishing-shot moment,
  * it's a fight already happening, and the reactive camera (Smart Observer's
  * BOMB_SITUATIONAL/ENGAGING scoring) is better placed to follow it than a
- * static cam would be.
+ * pre-recorded camera path would be.
  */
 export function maybeShowBombPlantShot(payload: GsiPayload, enabled: boolean): void {
   if (!enabled) return;
@@ -329,14 +403,16 @@ export function maybeShowQuietMomentShot(payload: GsiPayload, enabled: boolean):
   const mapName = payload.map?.name;
   if (!mapName) return;
 
-  const poiShots = listCinematicShots(mapName).filter((s) => s.slot === "poi");
+  // Same reference-point requirement as showNearestBombSiteShot above — a
+  // shot whose camera path had no parseable position can't be distance-matched.
+  const poiShots = listCinematicShots(mapName).filter((s) => s.slot === "poi" && s.position);
   if (poiShots.length === 0) return;
 
   const alivePlayers = Object.values(payload.allplayers ?? {}).filter((p) => (p.state?.health ?? 0) > 0);
 
   let nearest: { shot: CinematicShot; distance: number } | null = null;
   for (const shot of poiShots) {
-    const shotPos: Vec3 = shot.shot;
+    const shotPos: Vec3 = shot.position!;
     for (const player of alivePlayers) {
       const pos = parsePosition(player.position);
       if (!pos) continue;
@@ -347,8 +423,9 @@ export function maybeShowQuietMomentShot(payload: GsiPayload, enabled: boolean):
   }
   if (!nearest) return;
 
+  const durationMs = shotDurationMs(nearest.shot, QUIET_MOMENT_SHOT_DURATION_MS);
   quietSince = null;
-  suppressAutoSwitchUntil(now + QUIET_MOMENT_SHOT_DURATION_MS + 500);
+  suppressAutoSwitchUntil(now + durationMs + 500);
   fireShot(nearest.shot, "quiet_moment");
-  setTimeout(handBackToObserver, QUIET_MOMENT_SHOT_DURATION_MS);
+  setTimeout(handBackToObserver, durationMs);
 }

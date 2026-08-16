@@ -5,6 +5,7 @@ import { getLastTickShooters, processObserverEvents } from "./observer.js";
 import { readHudSettings } from "../db/hud-settings-store.js";
 import {
   cancelBombPlantShot,
+  cancelFreezetimeSequence,
   maybeRedirectToShooterDuringBombPlant,
   maybeRunCinematicSequence,
   maybeShowBombDefuseShot,
@@ -88,8 +89,24 @@ export function registerGsiListener(app: FastifyInstance): void {
         maybeRunCinematicSequence(payload.map?.name, payload.map?.round, settings.cinematicFreezetimeShotsEnabled);
       }
 
+      // Freezetime's real (server-configured mp_freezetime) duration isn't
+      // in GSI at all — the sequence's own wall-clock total is only ever a
+      // guess (see cinematic/scheduler.ts's freezetimeSequenceTimers doc
+      // comment), so round_start is what actually ends it cleanly if
+      // freezetime turned out shorter than that guess.
+      if (event.type === "round_start") {
+        cancelFreezetimeSequence();
+      }
+
+      // Bomb-plant/defuse establishing shots are fully implemented but
+      // disabled for all users for now, regardless of their persisted
+      // setting — hard-coded false here rather than
+      // settings.cinematicBombPlantShotsEnabled, same treatment as the
+      // quiet-moment toggle below. Their "poi" slot and the toggle are
+      // hidden in the admin UI (see SmartObserver.tsx). Flip these back to
+      // the setting (and re-show the toggle/slot) to bring them back.
       if (event.type === "bomb_planting") {
-        maybeShowBombPlantShot(payload, settings.cinematicBombPlantShotsEnabled);
+        maybeShowBombPlantShot(payload, false);
       }
 
       if (event.type === "bomb_plant_canceled") {
@@ -97,7 +114,7 @@ export function registerGsiListener(app: FastifyInstance): void {
       }
 
       if (event.type === "bomb_defusing") {
-        maybeShowBombDefuseShot(payload, settings.cinematicBombPlantShotsEnabled);
+        maybeShowBombDefuseShot(payload, false);
       }
 
       if (event.type === "round_end") {

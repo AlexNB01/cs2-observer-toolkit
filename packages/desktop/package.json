@@ -1,7 +1,7 @@
 {
   "name": "@cs2hud/desktop",
   "private": true,
-  "version": "0.2.4",
+  "version": "0.2.5",
   "description": "CS2 broadcast companion — GSI setup, Smart Auto Observer, and HLAE integration.",
   "author": "CS2 Observer Toolkit",
   "type": "module",

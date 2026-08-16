@@ -7,7 +7,7 @@
  */
 export interface DesktopBridge {
   pickFolder(): Promise<string | null>;
-  pickFile(extensions: string[]): Promise<string | null>;
+  pickFile(extensions: string[], filterName?: string, defaultPath?: string): Promise<string | null>;
 }
 
 declare global {

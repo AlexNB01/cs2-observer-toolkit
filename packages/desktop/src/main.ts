@@ -75,10 +75,11 @@ ipcMain.handle("pick-folder", async () => {
   return result.canceled || result.filePaths.length === 0 ? null : result.filePaths[0];
 });
 
-ipcMain.handle("pick-file", async (_event, extensions: string[]) => {
+ipcMain.handle("pick-file", async (_event, extensions: string[], filterName: string, defaultPath?: string) => {
   const result = await dialog.showOpenDialog({
     properties: ["openFile"],
-    filters: [{ name: "Executable", extensions }],
+    filters: [{ name: filterName, extensions }],
+    ...(defaultPath ? { defaultPath } : {}),
   });
   return result.canceled || result.filePaths.length === 0 ? null : result.filePaths[0];
 });

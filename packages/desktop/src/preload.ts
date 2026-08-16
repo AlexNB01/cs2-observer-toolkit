@@ -10,5 +10,6 @@ import { contextBridge, ipcRenderer } from "electron";
  */
 contextBridge.exposeInMainWorld("desktopBridge", {
   pickFolder: (): Promise<string | null> => ipcRenderer.invoke("pick-folder"),
-  pickFile: (extensions: string[]): Promise<string | null> => ipcRenderer.invoke("pick-file", extensions),
+  pickFile: (extensions: string[], filterName?: string, defaultPath?: string): Promise<string | null> =>
+    ipcRenderer.invoke("pick-file", extensions, filterName ?? "Executable", defaultPath),
 });

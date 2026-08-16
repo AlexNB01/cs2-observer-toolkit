@@ -7,21 +7,24 @@ interface CinematicShotRow {
   map_name: string;
   label: string;
   slot: "ct" | "t" | "poi";
-  x: number;
-  y: number;
-  z: number;
-  pitch: number;
-  yaw: number;
+  x: number | null;
+  y: number | null;
+  z: number | null;
+  campath_file_name: string;
+  campath_duration_ms: number | null;
   updated_at: string;
 }
 
 function toShot(row: CinematicShotRow): CinematicShot {
+  const hasPosition = row.x !== null && row.y !== null && row.z !== null;
   return {
     id: row.id,
     mapName: row.map_name,
     label: row.label,
     slot: row.slot,
-    shot: { x: row.x, y: row.y, z: row.z, pitch: row.pitch, yaw: row.yaw },
+    campathFileName: row.campath_file_name,
+    position: hasPosition ? { x: row.x!, y: row.y!, z: row.z! } : undefined,
+    campathDurationMs: row.campath_duration_ms ?? undefined,
     updatedAt: row.updated_at,
   };
 }
@@ -47,27 +50,30 @@ export function saveCinematicShot(input: {
   mapName: string;
   label: string;
   slot: "ct" | "t" | "poi";
-  shot: CinematicShot["shot"];
+  campathFileName: string;
+  position?: CinematicShot["position"];
+  campathDurationMs?: number;
 }): CinematicShot {
   const id = input.id ?? randomUUID();
   const now = new Date().toISOString();
   db.prepare(
-    `INSERT INTO cinematic_shots (id, map_name, label, slot, x, y, z, pitch, yaw, updated_at)
-     VALUES (@id, @mapName, @label, @slot, @x, @y, @z, @pitch, @yaw, @updatedAt)
+    `INSERT INTO cinematic_shots (id, map_name, label, slot, x, y, z, campath_file_name, campath_duration_ms, updated_at)
+     VALUES (@id, @mapName, @label, @slot, @x, @y, @z, @campathFileName, @campathDurationMs, @updatedAt)
      ON CONFLICT(id) DO UPDATE SET
        map_name = excluded.map_name, label = excluded.label, slot = excluded.slot,
-       x = excluded.x, y = excluded.y, z = excluded.z, pitch = excluded.pitch, yaw = excluded.yaw,
+       x = excluded.x, y = excluded.y, z = excluded.z,
+       campath_file_name = excluded.campath_file_name, campath_duration_ms = excluded.campath_duration_ms,
        updated_at = excluded.updated_at`
   ).run({
     id,
     mapName: input.mapName,
     label: input.label,
     slot: input.slot,
-    x: input.shot.x,
-    y: input.shot.y,
-    z: input.shot.z,
-    pitch: input.shot.pitch,
-    yaw: input.shot.yaw,
+    x: input.position?.x ?? null,
+    y: input.position?.y ?? null,
+    z: input.position?.z ?? null,
+    campathFileName: input.campathFileName,
+    campathDurationMs: input.campathDurationMs ?? null,
     updatedAt: now,
   });
   return getCinematicShot(id)!;
@@ -84,8 +90,8 @@ export function replaceAllCinematicShots(shots: CinematicShot[]): void {
   try {
     db.exec("DELETE FROM cinematic_shots");
     const insert = db.prepare(
-      `INSERT INTO cinematic_shots (id, map_name, label, slot, x, y, z, pitch, yaw, updated_at)
-       VALUES (@id, @mapName, @label, @slot, @x, @y, @z, @pitch, @yaw, @updatedAt)`
+      `INSERT INTO cinematic_shots (id, map_name, label, slot, x, y, z, campath_file_name, campath_duration_ms, updated_at)
+       VALUES (@id, @mapName, @label, @slot, @x, @y, @z, @campathFileName, @campathDurationMs, @updatedAt)`
     );
     for (const shot of shots) {
       insert.run({
@@ -93,11 +99,11 @@ export function replaceAllCinematicShots(shots: CinematicShot[]): void {
         mapName: shot.mapName,
         label: shot.label,
         slot: shot.slot,
-        x: shot.shot.x,
-        y: shot.shot.y,
-        z: shot.shot.z,
-        pitch: shot.shot.pitch,
-        yaw: shot.shot.yaw,
+        x: shot.position?.x ?? null,
+        y: shot.position?.y ?? null,
+        z: shot.position?.z ?? null,
+        campathFileName: shot.campathFileName,
+        campathDurationMs: shot.campathDurationMs ?? null,
         updatedAt: now,
       });
     }

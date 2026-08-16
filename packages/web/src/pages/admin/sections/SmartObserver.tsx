@@ -5,6 +5,7 @@ import { Card, Row, Toggle } from "../../../components/ui.js";
 import { useHudSettings } from "../../../lib/useHudSettings.js";
 import { useHudSocket } from "../../../lib/ws-client.js";
 import { api } from "../../../lib/api-client.js";
+import { desktopBridge } from "../../../lib/desktop-bridge.js";
 
 const EVENT_LABEL: Record<ObserverQueueItem["eventType"], string> = {
   CLUTCH: "Clutch",
@@ -20,31 +21,25 @@ const EVENT_LABEL: Record<ObserverQueueItem["eventType"], string> = {
   PUSH_TARGET: "Holding against a push",
 };
 
+// "poi" (bomb plant / quiet moment) still exists as a slot value — the
+// triggers that would use it are implemented but hidden/disabled for now
+// (see gsi/listener.ts) — so it's kept here for type completeness but
+// left out of the Type dropdown below.
 const SLOT_LABEL: Record<CinematicShot["slot"], string> = {
   ct: "CT spawn (freezetime)",
   t: "T spawn (freezetime)",
-  poi: "Point of interest (bomb plant / quiet moment)",
+  poi: "Point of interest",
 };
 
-const TRIGGER_LABEL: Record<"freezetime" | "bomb_plant" | "bomb_defuse" | "quiet_moment", string> = {
+const TRIGGER_LABEL: Record<"freezetime" | "bomb_plant" | "bomb_defuse" | "quiet_moment" | "manual", string> = {
   freezetime: "Freezetime",
   bomb_plant: "Bomb plant",
   bomb_defuse: "Uncontested defuse",
   quiet_moment: "Quiet moment",
+  manual: "Manual",
 };
 
 const MAPS = Object.keys(RADAR_CALIBRATION).sort();
-
-function shotToText(shot: { x: number; y: number; z: number; pitch: number; yaw: number }): string {
-  return `${shot.x} ${shot.y} ${shot.z} ${shot.pitch} ${shot.yaw}`;
-}
-
-function parseShot(text: string): { x: number; y: number; z: number; pitch: number; yaw: number } | null {
-  const parts = text.trim().split(/\s+/).map(Number);
-  if (parts.length !== 5 || parts.some(Number.isNaN)) return null;
-  const [x, y, z, pitch, yaw] = parts as [number, number, number, number, number];
-  return { x, y, z, pitch, yaw };
-}
 
 export function SmartObserver() {
   const { settings, update } = useHudSettings();
@@ -54,11 +49,11 @@ export function SmartObserver() {
   const [editingId, setEditingId] = useState<string | null>(null);
   const [labelText, setLabelText] = useState("");
   const [slot, setSlot] = useState<CinematicShot["slot"]>("ct");
-  const [coordsText, setCoordsText] = useState("");
   const [cinematicMessage, setCinematicMessage] = useState<string | null>(null);
   const [cinematicCfg, setCinematicCfg] = useState<string | null>(null);
   const [lastCue, setLastCue] = useState<string | null>(null);
   const [netconsoleConnected, setNetconsoleConnected] = useState<boolean | null>(null);
+  const [manualActive, setManualActive] = useState(false);
 
   useEffect(() => {
     api.get<ObserverQueueItem[]>("/observer/queue").then(setQueue).catch(console.error);
@@ -93,34 +88,24 @@ export function SmartObserver() {
     setEditingId(null);
     setLabelText("");
     setSlot("ct");
-    setCoordsText("");
   }
 
   function startEdit(s: CinematicShot) {
     setEditingId(s.id);
     setLabelText(s.label);
     setSlot(s.slot);
-    setCoordsText(shotToText(s.shot));
   }
 
-  async function saveShot() {
+  /** Renames/reslots the shot being edited — its camera path is untouched (see attachCampath for replacing that). */
+  async function saveShotEdit() {
+    if (!editingId) return;
     setCinematicMessage(null);
     if (!labelText.trim()) {
       setCinematicMessage("Label is required.");
       return;
     }
-    const shot = parseShot(coordsText);
-    if (!shot) {
-      setCinematicMessage('Expected 5 numbers: "x y z pitch yaw"');
-      return;
-    }
-    const body = { mapName: selectedMap, label: labelText.trim(), slot, shot };
-    if (editingId) {
-      await api.put(`/cinematic/shots/${editingId}`, body);
-    } else {
-      await api.post("/cinematic/shots", body);
-    }
-    setCinematicMessage(`Saved "${body.label}".`);
+    await api.put(`/cinematic/shots/${editingId}`, { mapName: selectedMap, label: labelText.trim(), slot });
+    setCinematicMessage(`Saved "${labelText.trim()}".`);
     resetForm();
     reloadShots();
   }
@@ -129,6 +114,68 @@ export function SmartObserver() {
     await api.del(`/cinematic/shots/${id}`);
     if (editingId === id) resetForm();
     reloadShots();
+  }
+
+  // mirv_campath save's own default target (when no path is given) is
+  // wherever cs2.exe lives — game\bin\win64, a sibling of the csgo\cfg
+  // folder already configured on the GSI Setup page. HLAE.exe's own
+  // install location isn't a reliable guess for this (it's commonly
+  // installed somewhere else entirely, e.g. C:\HLAE\), so this derives it
+  // from cs2CfgDir instead.
+  function campathDefaultDir(): string | undefined {
+    const cfgDir = settings?.cs2CfgDir;
+    if (!cfgDir) return undefined;
+    const gameDir = cfgDir.replace(/[\\/]csgo[\\/]cfg[\\/]?$/i, "");
+    if (gameDir === cfgDir) return undefined; // didn't match the expected "...\game\csgo\cfg" shape
+    return `${gameDir.replace(/[\\/]+$/, "")}\\bin\\win64`;
+  }
+
+  /** Replaces an existing shot's camera path (its reference position/duration are re-derived from the new file). */
+  async function attachCampath(id: string) {
+    setCinematicMessage(null);
+    const file = await desktopBridge?.pickFile(["*"], "HLAE camera path", campathDefaultDir());
+    if (!file) return;
+    try {
+      await api.post(`/cinematic/shots/${id}/campath`, { sourcePath: file });
+      setCinematicMessage("Camera path replaced.");
+      reloadShots();
+    } catch (e) {
+      setCinematicMessage((e as Error).message);
+    }
+  }
+
+  /** The only way to create a shot — every shot plays a camera path, no coordinates to capture separately. */
+  async function loadCampath() {
+    setCinematicMessage(null);
+    if (!labelText.trim()) {
+      setCinematicMessage("Label is required.");
+      return;
+    }
+    const file = await desktopBridge?.pickFile(["*"], "HLAE camera path", campathDefaultDir());
+    if (!file) return;
+    try {
+      await api.post("/cinematic/campath-shots", { mapName: selectedMap, label: labelText.trim(), slot, sourcePath: file });
+      setCinematicMessage(`Loaded "${labelText.trim()}".`);
+      resetForm();
+      reloadShots();
+    } catch (e) {
+      setCinematicMessage((e as Error).message);
+    }
+  }
+
+  async function fireShotNow(id: string) {
+    setCinematicMessage(null);
+    try {
+      await api.post(`/cinematic/shots/${id}/fire`);
+      setManualActive(true);
+    } catch (e) {
+      setCinematicMessage((e as Error).message);
+    }
+  }
+
+  async function stopManual() {
+    await api.post("/cinematic/stop");
+    setManualActive(false);
   }
 
   async function previewCfg() {
@@ -214,24 +261,37 @@ export function SmartObserver() {
         <Row label="Freezetime shots" hint="Winner's side first, rotates through however many CT/T shots you've captured for the map">
           <Toggle checked={settings.cinematicFreezetimeShotsEnabled} onChange={(v) => update({ cinematicFreezetimeShotsEnabled: v })} />
         </Row>
-        <Row label="Bomb plant shots" hint="As planting starts (or, if the enemy team is already fully dead, as defusing starts) cuts to whichever captured shot is nearest">
-          <Toggle checked={settings.cinematicBombPlantShotsEnabled} onChange={(v) => update({ cinematicBombPlantShotsEnabled: v })} />
-        </Row>
         {/*
-          Quiet-moment filler shots are implemented (see cinematic/scheduler.ts's
-          maybeShowQuietMomentShot) but disabled for all users for now — the
-          server hard-codes it off regardless of this setting (see
-          gsi/listener.ts). Toggle hidden here to match; re-add this Row to
-          bring it back once it's ready.
+          Bomb-plant/defuse establishing shots and quiet-moment filler shots
+          are fully implemented (see cinematic/scheduler.ts) but disabled
+          for all users for now — the server hard-codes them off regardless
+          of these settings (see gsi/listener.ts). Toggles (and the "poi"
+          slot they depend on) hidden here to match; re-add these Rows and
+          the "poi" <option> in the Type select below to bring them back.
+          <Row label="Bomb plant shots" hint="As planting starts (or, if the enemy team is already fully dead, as defusing starts) cuts to whichever captured shot is nearest">
+            <Toggle checked={settings.cinematicBombPlantShotsEnabled} onChange={(v) => update({ cinematicBombPlantShotsEnabled: v })} />
+          </Row>
           <Row label="Quiet-moment filler shots" hint="Cuts briefly to a point-of-interest shot (e.g. mid) when players are near it and nothing else is happening">
             <Toggle checked={settings.cinematicQuietMomentShotsEnabled} onChange={(v) => update({ cinematicQuietMomentShotsEnabled: v })} />
           </Row>
         */}
 
         <p style={{ color: "var(--muted)", fontSize: 12 }}>
-          There's no way to guess good camera spots without being in the map. In CS2: <code>spec_mode 6</code>, fly to a spot, run{" "}
-          <code>spec_pos</code>, and paste the printed x/y/z/pitch/yaw below. Capture as many as you want per map — CT/T spawn shots
-          rotate at freezetime, everything else (bomb sites, mid, ...) is a "point of interest" shown mid-round.
+          "▶ Fire now" on any shot below cuts to it immediately, live, ignoring the freezetime trigger above — useful for testing a
+          camera path against a real match without waiting for the right moment to line up. It stays up until you press Stop.
+        </p>
+        {manualActive && (
+          <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 8 }}>
+            <span style={{ color: "var(--accent)" }}>🎬 Manual shot live</span>
+            <button onClick={stopManual}>⏹ Stop</button>
+          </div>
+        )}
+
+        <p style={{ color: "var(--muted)", fontSize: 12 }}>
+          Every shot plays an HLAE <code>mirv_campath</code> file — build the path in-game with HLAE's own campath editor, save it
+          (<code>mirv_campath save</code>), then import it with "Load campath" below. Its reference position (used to pick which
+          shot is nearest the action) is derived automatically from the path's first keyframe, so there's nothing to capture by
+          hand.
         </p>
 
         <Row label="Map">
@@ -251,9 +311,17 @@ export function SmartObserver() {
             <div className="list-item" key={s.id}>
               <span>
                 {s.label} <small style={{ color: "var(--muted)" }}>({SLOT_LABEL[s.slot]})</small>
+                <small style={{ color: "var(--accent)" }}>
+                  {" "}
+                  · 🎥 {s.campathDurationMs ? `${(s.campathDurationMs / 1000).toFixed(1)}s` : "camera path"}
+                </small>
               </span>
               <span>
+                <button className="secondary" onClick={() => fireShotNow(s.id)}>▶ Fire now</button>{" "}
                 <button className="secondary" onClick={() => startEdit(s)}>Edit</button>{" "}
+                <button className="secondary" onClick={() => attachCampath(s.id)} disabled={!desktopBridge}>
+                  Replace path
+                </button>{" "}
                 <button className="secondary" onClick={() => deleteShot(s.id)}>Delete</button>
               </span>
             </div>
@@ -261,26 +329,35 @@ export function SmartObserver() {
         )}
 
         <h3 style={{ fontSize: 13, color: "var(--muted)", margin: "16px 0 4px" }}>{editingId ? "Edit shot" : "Add shot"}</h3>
-        <Row label="Label" hint='e.g. "CT spawn", "Mid", "Bombsite A"'>
+        <Row label="Label" hint='e.g. "CT spawn", "T spawn"'>
           <input type="text" value={labelText} onChange={(e) => setLabelText(e.target.value)} />
         </Row>
         <Row label="Type">
           <select value={slot} onChange={(e) => setSlot(e.target.value as CinematicShot["slot"])}>
             <option value="ct">CT spawn (freezetime)</option>
             <option value="t">T spawn (freezetime)</option>
-            <option value="poi">Point of interest (bomb plant / quiet moment)</option>
           </select>
         </Row>
-        <Row label="Coordinates" hint="x y z pitch yaw">
-          <input type="text" placeholder="e.g. -500 1200 150 -5 90" value={coordsText} onChange={(e) => setCoordsText(e.target.value)} />
-        </Row>
 
-        <div style={{ display: "flex", gap: 8, marginTop: 8 }}>
-          <button onClick={saveShot}>{editingId ? "Save changes" : "Add shot"}</button>
-          {editingId && <button className="secondary" onClick={resetForm}>Cancel</button>}
+        <div style={{ display: "flex", gap: 8, marginTop: 8, flexWrap: "wrap" }}>
+          {editingId ? (
+            <>
+              <button onClick={saveShotEdit}>Save changes</button>
+              <button className="secondary" onClick={resetForm}>Cancel</button>
+            </>
+          ) : (
+            <button className="secondary" onClick={loadCampath} disabled={!desktopBridge}>
+              Load campath…
+            </button>
+          )}
           <button className="secondary" onClick={previewCfg}>Preview cfg</button>
           <button className="secondary" onClick={installCfg}>Install cinematic.cfg</button>
         </div>
+        {!desktopBridge && (
+          <p style={{ color: "var(--muted)", fontSize: 12 }}>
+            Native file picker isn't available outside the desktop app — "Replace path"/"Load campath" need it.
+          </p>
+        )}
         {cinematicMessage && <p style={{ color: "var(--muted)" }}>{cinematicMessage}</p>}
         {cinematicCfg && (
           <pre style={{ whiteSpace: "pre-wrap", fontSize: 12, background: "#0b0d10", padding: 12, borderRadius: 6, marginTop: 8 }}>

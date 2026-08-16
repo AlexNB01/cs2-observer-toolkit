@@ -13,8 +13,7 @@ function isValidShot(shot: unknown): shot is CinematicShot {
     typeof s.mapName === "string" &&
     typeof s.label === "string" &&
     (s.slot === "ct" || s.slot === "t" || s.slot === "poi") &&
-    typeof s.shot === "object" &&
-    s.shot !== null
+    typeof s.campathFileName === "string"
   );
 }
 

@@ -53,22 +53,15 @@ export interface ObserverQueueItem {
   createdAt: string;
 }
 
-/**
- * A cinematic camera position. Captured by the user in-game (spec_mode 6,
- * walk the free camera to a spot, run `spec_pos`, copy the printed
- * x/y/z/pitch/yaw here) — there's no way to derive these without being in
- * the map, so they're not pre-filled for any map.
- */
-export interface CinematicCameraShot {
+/** A world-space point, e.g. an auto-derived reference position for a camera path (see CinematicShot below). */
+export interface CinematicCameraPosition {
   x: number;
   y: number;
   z: number;
-  pitch: number;
-  yaw: number;
 }
 
 /**
- * A single named camera spot captured for a map. Any number can be
+ * A single named camera path attached for a map. Any number can be
  * captured per map. `slot` decides how it's used: "ct"/"t" shots rotate
  * through at freezetime start (winner's side first, see
  * cinematic/scheduler.ts); "poi" ("point of interest" — mid, a bombsite,
@@ -80,7 +73,31 @@ export interface CinematicShot {
   mapName: string;
   label: string;
   slot: "ct" | "t" | "poi";
-  shot: CinematicCameraShot;
+  /**
+   * Stored filename (see cinematic/campath-storage.ts) of the imported
+   * HLAE mirv_campath file this shot plays — every shot has one; there's
+   * no static-jump fallback.
+   */
+  campathFileName: string;
+  /**
+   * The path's earliest keyframe's world position, parsed automatically at
+   * import time (see campath-storage.ts's parseCampathInfo) — stands in for
+   * a manually-captured reference point, used for bomb-site/quiet-moment
+   * nearest-shot matching (see cinematic/scheduler.ts). Freezetime ct/t
+   * rotation doesn't use it at all (that pool just rotates by index).
+   * Optional only as a safety net for a file whose keyframes somehow
+   * couldn't be parsed — importCampathFile rejects that case outright, so
+   * in practice this is always present.
+   */
+  position?: CinematicCameraPosition;
+  /**
+   * Playback length of the attached camera path in milliseconds, parsed
+   * from its keyframe timestamps at import time. cinematic/scheduler.ts
+   * uses this instead of each trigger's fixed hold duration when set, so a
+   * shot is held for exactly as long as its path actually plays — neither
+   * cut off mid-motion nor left sitting still after it finishes.
+   */
+  campathDurationMs?: number;
   updatedAt: string;
 }
 
