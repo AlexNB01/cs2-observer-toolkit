@@ -67,12 +67,14 @@ afterward:
 | Multi-kill | +25 per kill this round | on top of the kill, once the attacker has 2+ round kills |
 | Trade | +30 | killing whoever killed a teammate within the last 5s |
 | Clutch kill | +40, +20 per enemy still alive | attacker is the sole survivor of their team |
-| Shot fired | 10 (+15 if aimed at an enemy) | the aim bonus needs the shooter roughly facing an alive enemy within 1200 units, not just one nearby; capped at 45 total |
+| Shot fired | 10 (+15 if aimed at an enemy) | the aim bonus needs the shooter roughly facing an alive enemy within 1200 units (2500 if the shooter's holding a sniper rifle), not just one nearby; capped at 45 total |
 
 The half-life these decay at isn't fixed — it depends on whether an enemy is currently
 *in the shooter's view* (facing roughly toward them, not just nearby): 12s while looking
 at a nearby live enemy, a 5s baseline further away, or 2.5s when looking somewhere with
-no enemy in sight at all — even one standing right behind them doesn't count.
+no enemy in sight at all — even one standing right behind them doesn't count. "Nearby"
+extends to 2500 units (from 1200) while holding a sniper rifle, so a long-range AWP pick
+doesn't decay at the fast rate just because nobody else is within rifle range.
 
 ### Situational score
 
@@ -97,6 +99,12 @@ Recomputed fresh every tick from whatever's true *right now*:
 - **Holding against a push** — up to 45 for whichever CT is within 1000 units of a
   detected T stack and facing roughly toward the nearest one. Doesn't fire for a CT who
   isn't looking that way.
+
+All four of these ranges (1200/1000/1000/1000 units above) extend to 2500 units for
+whichever player in the pair is holding a sniper rifle (AWP/SSG08/Scout) — those
+duels and holds routinely happen well past rifle engagement distance, so without this
+an AWPer never registers as a threat before the shot and gets cut away from almost
+immediately after a pick.
 
 ### Cinematic shots
 
