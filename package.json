@@ -1,7 +1,7 @@
 {
   "name": "cs2-observer-toolkit",
   "private": true,
-  "version": "0.2.5",
+  "version": "0.2.6",
   "type": "module",
   "workspaces": [
     "packages/*"

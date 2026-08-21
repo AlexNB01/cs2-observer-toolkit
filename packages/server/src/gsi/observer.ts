@@ -76,6 +76,16 @@ const CLUTCH_SITUATIONAL_PER_ENEMY = 10;
 const BOMB_SITUATIONAL = 500;
 const PROXIMITY_MAX = 10;
 const PROXIMITY_RANGE_UNITS = 1200; // distance at which proximity's contribution reaches 0
+// AWP/SSG08/Scout duels routinely happen well past PROXIMITY_RANGE_UNITS/
+// FLANK_RANGE_UNITS/PUSH_TARGET_RANGE_UNITS (those are tuned for rifle/CQC
+// engagement distances) — long sightlines like Dust2 long-A or Mirage mid
+// are easily 2000+ units. Without a longer range for a sniper holder, they
+// never register as "watching an angle" before the shot, and worse, right
+// after a pick nearestEnemyClosenessInView reads back "no enemy nearby" and
+// decays their kill score at the fast NO_ENEMY_IN_SIGHT rate instead of the
+// slower near-enemy rate — cutting the camera away almost immediately after
+// an AWP kill instead of holding on them like it would for a rifle duel.
+const SNIPER_RANGE_UNITS = 2500;
 
 // A "stack": several teammates moving together as a group, rather than
 // spread out on separate default spots — usually means a coordinated
@@ -268,6 +278,16 @@ function playerSpeed(steamId: string, pos: Vec3, now: number): number {
   return distance3d(prev.pos, pos) / dtSeconds;
 }
 
+/** True while `player`'s currently-held weapon is a sniper rifle (AWP/SSG08/Scout). */
+function hasActiveSniper(player: GsiPlayer): boolean {
+  return Object.values(player.weapons ?? {}).some((w) => w.state === "active" && w.type === "SniperRifle");
+}
+
+/** baseRange, extended to SNIPER_RANGE_UNITS if any of the given players is currently holding a sniper rifle. */
+function rangeUnitsFor(baseRange: number, ...players: GsiPlayer[]): number {
+  return players.some(hasActiveSniper) ? Math.max(baseRange, SNIPER_RANGE_UNITS) : baseRange;
+}
+
 function countAlive(allplayers: Record<string, GsiPlayer>, team: "CT" | "T"): number {
   return Object.values(allplayers).filter((p) => p.team === team && (p.state?.health ?? 0) > 0).length;
 }
@@ -285,13 +305,14 @@ function nearestEnemyClosenessInView(player: GsiPlayer, allplayers: Record<strin
   if (!pos) return 0;
 
   const enemyTeam: "CT" | "T" = player.team === "CT" ? "T" : "CT";
+  const range = rangeUnitsFor(PROXIMITY_RANGE_UNITS, player);
   let closest = 0;
   for (const other of Object.values(allplayers)) {
     if (other.team !== enemyTeam || (other.state?.health ?? 0) <= 0) continue;
     const otherPos = parsePosition(other.position);
     if (!otherPos) continue;
     if (!isFacingToward(player, pos, otherPos)) continue;
-    const closeness = 1 - distance3d(pos, otherPos) / PROXIMITY_RANGE_UNITS;
+    const closeness = 1 - distance3d(pos, otherPos) / range;
     if (closeness > closest) closest = closeness;
   }
   return Math.min(1, closest);
@@ -433,7 +454,8 @@ function bumpProximity(alivePlayers: [string, GsiPlayer][], bump: BumpFn): void 
       const tPos = parsePosition(tPlayer.position);
       if (!tPos) continue;
 
-      const closeness = 1 - distance3d(ctPos, tPos) / PROXIMITY_RANGE_UNITS;
+      const range = rangeUnitsFor(PROXIMITY_RANGE_UNITS, ctPlayer, tPlayer);
+      const closeness = 1 - distance3d(ctPos, tPos) / range;
       if (closeness <= 0) continue;
 
       const amount = PROXIMITY_MAX * Math.min(1, closeness);
@@ -503,11 +525,12 @@ function isShootingTowardEnemy(player: GsiPlayer, allplayers: Record<string, Gsi
   if (!pos) return false;
 
   const enemyTeam: "CT" | "T" = player.team === "CT" ? "T" : "CT";
+  const range = rangeUnitsFor(PROXIMITY_RANGE_UNITS, player);
   for (const other of Object.values(allplayers)) {
     if (other.team !== enemyTeam || (other.state?.health ?? 0) <= 0) continue;
     const otherPos = parsePosition(other.position);
     if (!otherPos) continue;
-    if (distance3d(pos, otherPos) > PROXIMITY_RANGE_UNITS) continue;
+    if (distance3d(pos, otherPos) > range) continue;
     if (isFacingToward(player, pos, otherPos, SHOOTING_AT_ENEMY_COS_THRESHOLD)) return true;
   }
   return false;
@@ -539,7 +562,8 @@ function bumpFlankPotential(alivePlayers: [string, GsiPlayer][], bump: BumpFn): 
 
   for (const a of ctPlayers) {
     for (const b of tPlayers) {
-      const closeness = 1 - distance3d(a.pos, b.pos) / FLANK_RANGE_UNITS;
+      const range = rangeUnitsFor(FLANK_RANGE_UNITS, a.player, b.player);
+      const closeness = 1 - distance3d(a.pos, b.pos) / range;
       if (closeness <= 0) continue;
 
       const aFacingB = isFacingToward(a.player, a.pos, b.pos);
@@ -605,12 +629,13 @@ function bumpPushTarget(tStacked: Set<string>, alivePlayers: [string, GsiPlayer]
     const ctPos = parsePosition(ctPlayer.position);
     if (!ctPos) continue;
 
+    const range = rangeUnitsFor(PUSH_TARGET_RANGE_UNITS, ctPlayer);
     let nearest: { pos: Vec3; distance: number } | null = null;
     for (const [, tPlayer] of stackedTs) {
       const tPos = parsePosition(tPlayer.position);
       if (!tPos) continue;
       const distance = distance3d(ctPos, tPos);
-      if (distance > PUSH_TARGET_RANGE_UNITS) continue;
+      if (distance > range) continue;
       if (!nearest || distance < nearest.distance) nearest = { pos: tPos, distance };
     }
     if (!nearest) continue;
