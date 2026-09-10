@@ -43,6 +43,19 @@ const EVENT_SCORE_HALF_LIFE_NEAR_ENEMY_MS = 12_000;
 // merely being far from the nearest one, so it decays quicker than the
 // baseline rather than just skipping the near-enemy bonus.
 const EVENT_SCORE_HALF_LIFE_NO_ENEMY_IN_SIGHT_MS = 2_500;
+// How long the near-enemy slow decay (up to EVENT_SCORE_HALF_LIFE_NEAR_ENEMY_MS)
+// keeps applying after a player's last real kill/shot, independent of
+// whether an enemy is still in view. Visibility alone isn't a time limit —
+// nearestEnemyClosenessInView is recomputed fresh every tick, so without
+// this cap a player who gets a pick and then just holds a corner where
+// some other enemy happens to remain in their wide awareness cone (even
+// far away, even doing nothing) would keep decaying at the slow rate
+// indefinitely: the camera would sit on them long after the fight is
+// actually over. The allowance in EVENT_SCORE_HALF_LIFE_NEAR_ENEMY_MS's
+// comment is for the fight *still developing* — a reload, a re-peek — not
+// for a stale standoff with no new activity, so past this cap a read falls
+// back to the plain baseline regardless of who's in view.
+const NEAR_ENEMY_BONUS_MAX_ELAPSED_MS = 6_000;
 
 const KILL_BASE = 100;
 const HEADSHOT_BONUS = 15;
@@ -342,6 +355,27 @@ function decayHalfLifeFor(player: GsiPlayer, allplayers: Record<string, GsiPlaye
 }
 
 /**
+ * decayHalfLifeFor, but for decaying `map`'s already-accumulated score at
+ * read time rather than for a just-written event — see
+ * NEAR_ENEMY_BONUS_MAX_ELAPSED_MS. Once too long has passed since this
+ * accumulator's last real kill/shot, the near-enemy slow rate is no longer
+ * trusted even if an enemy remains in view, and this falls back to the
+ * plain baseline instead.
+ */
+function readHalfLifeFor(
+  map: Map<string, EventAccumulator>,
+  steamId: string,
+  now: number,
+  player: GsiPlayer,
+  allplayers: Record<string, GsiPlayer>
+): number {
+  const acc = map.get(steamId);
+  const elapsedSinceEvent = acc ? now - acc.lastDecayAt : Infinity;
+  if (elapsedSinceEvent > NEAR_ENEMY_BONUS_MAX_ELAPSED_MS) return EVENT_SCORE_HALF_LIFE_MS;
+  return decayHalfLifeFor(player, allplayers);
+}
+
+/**
  * Detects a shot as a drop in the active weapon's ammo_clip since the last
  * tick, and adds a small decaying boost rather than the old fixed-value,
  * cooldown-gated one-shot event. Sustained fire naturally keeps the score
@@ -469,21 +503,25 @@ function bumpProximity(alivePlayers: [string, GsiPlayer][], bump: BumpFn): void 
 // enough to actually press the angle, not just generally on that side of
 // the map.
 const FLANK_RANGE_UNITS = 1000;
-// Cosine of roughly a ±60° cone around a player's `forward` vector. CS2's
-// actual FOV is wider than this, so crossing this threshold reads as
-// "generally facing that way," not "aimed precisely at them" — deliberately
-// generous since the goal is an awareness proxy, not an aim-assist check.
-const FLANK_VIEW_COS_THRESHOLD = 0.5;
+// Cosine of roughly a ±30° cone around a player's `forward` vector —
+// tightened from an earlier ±60°, which read as "facing that general
+// direction" too liberally (an enemy 50° off to the side still counted as
+// "in view"). Still somewhat generous since the goal is an awareness
+// proxy, not an aim-assist check, but now closer to actually looking that
+// way rather than merely being turned toward that half of the map.
+const FLANK_VIEW_COS_THRESHOLD = 0.87;
 // Comparable to a real duel-tier score (ENGAGING_CAP is 45) so a genuine
 // unnoticed angle stands out over ambient proximity/decay noise without
 // outweighing an actual live exchange.
 const FLANK_POTENTIAL_MAX = 45;
-// Cosine of roughly a ±32° cone — much tighter than FLANK_VIEW_COS_THRESHOLD,
-// since this checks whether a shot was actually aimed toward an enemy, not
-// just "facing their general direction." Loose enough to tolerate recoil
-// spread and a tick of position/forward lag, tight enough that spraying a
-// wall 90° off from an enemy doesn't count.
-const SHOOTING_AT_ENEMY_COS_THRESHOLD = 0.85;
+// Cosine of roughly a ±16° cone — much tighter than FLANK_VIEW_COS_THRESHOLD
+// (itself tightened from ±60° to ±30°, so this followed suit from ±32° to
+// keep the same relative gap), since this checks whether a shot was
+// actually aimed toward an enemy, not just "facing their general
+// direction." Still loose enough to tolerate recoil spread and a tick of
+// position/forward lag, but tight enough that a wall-spray well off an
+// enemy's actual position doesn't count.
+const SHOOTING_AT_ENEMY_COS_THRESHOLD = 0.96;
 
 function dot(a: Vec3, b: Vec3): number {
   return a.x * b.x + a.y * b.y + a.z * b.z;
@@ -721,14 +759,13 @@ function computeRankedScores(current: GsiPayload, now: number): ObserverQueueIte
   };
 
   for (const [steamId, player] of alivePlayers) {
-    const halfLifeMs = decayHalfLifeFor(player, allplayers);
-
-    const killDecayed = decayedScore(killEventScores, steamId, now, halfLifeMs);
+    const killDecayed = decayedScore(killEventScores, steamId, now, readHalfLifeFor(killEventScores, steamId, now, player, allplayers));
     const killAcc = killEventScores.get(steamId);
     if (killDecayed > 0.5 && killAcc) bump(steamId, killDecayed, killAcc.topEventType);
 
     // Capped regardless of how much has accumulated — see ENGAGING_CAP.
-    const engagingDecayed = Math.min(decayedScore(engagingEventScores, steamId, now, halfLifeMs), ENGAGING_CAP);
+    const engagingHalfLifeMs = readHalfLifeFor(engagingEventScores, steamId, now, player, allplayers);
+    const engagingDecayed = Math.min(decayedScore(engagingEventScores, steamId, now, engagingHalfLifeMs), ENGAGING_CAP);
     if (engagingDecayed > 0.5) bump(steamId, engagingDecayed, "ENGAGING");
   }
 

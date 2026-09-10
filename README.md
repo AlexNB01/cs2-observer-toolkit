@@ -74,7 +74,10 @@ The half-life these decay at isn't fixed — it depends on whether an enemy is c
 at a nearby live enemy, a 5s baseline further away, or 2.5s when looking somewhere with
 no enemy in sight at all — even one standing right behind them doesn't count. "Nearby"
 extends to 2500 units (from 1200) while holding a sniper rifle, so a long-range AWP pick
-doesn't decay at the fast rate just because nobody else is within rifle range.
+doesn't decay at the fast rate just because nobody else is within rifle range. That 12s
+rate only applies for 6s after the player's last real kill/shot, though — an enemy merely
+staying visible forever (holding a corner well after the fight is actually over) falls
+back to the 5s baseline instead of staying pinned at 12s indefinitely.
 
 ### Situational score
 
