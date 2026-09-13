@@ -1,5 +1,6 @@
 import fs from "node:fs";
 import type { HudSettings } from "@cs2hud/shared";
+import { DEFAULT_OBSERVER_TUNING } from "@cs2hud/shared";
 import { db } from "./client.js";
 import { env } from "../config/env.js";
 import { campathFilePath, parseCampathInfo } from "../cinematic/campath-storage.js";
@@ -21,6 +22,7 @@ export const DEFAULT_HUD_SETTINGS: Omit<HudSettings, "updatedAt"> = {
   cinematicFreezetimeShotsEnabled: false,
   cinematicBombPlantShotsEnabled: false,
   cinematicQuietMomentShotsEnabled: false,
+  observerTuning: DEFAULT_OBSERVER_TUNING,
 
   hlaeKillfeedEnabled: false,
   hlaeXrayEnabled: false,

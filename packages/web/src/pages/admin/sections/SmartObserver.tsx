@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
-import type { CinematicShot, ObserverQueueItem } from "@cs2hud/shared";
-import { RADAR_CALIBRATION } from "@cs2hud/shared";
-import { Card, Row, Toggle } from "../../../components/ui.js";
+import type { CinematicShot, ObserverQueueItem, ObserverTuning } from "@cs2hud/shared";
+import { DEFAULT_OBSERVER_TUNING, RADAR_CALIBRATION } from "@cs2hud/shared";
+import { Card, NumberField, Row, Toggle } from "../../../components/ui.js";
 import { useHudSettings } from "../../../lib/useHudSettings.js";
 import { useHudSocket } from "../../../lib/ws-client.js";
 import { api } from "../../../lib/api-client.js";
@@ -40,6 +40,29 @@ const TRIGGER_LABEL: Record<"freezetime" | "bomb_plant" | "bomb_defuse" | "quiet
 };
 
 const MAPS = Object.keys(RADAR_CALIBRATION).sort();
+
+function TuningRow(props: {
+  label: string;
+  hint?: string;
+  tuning: ObserverTuning;
+  field: keyof ObserverTuning;
+  onChange: (patch: Partial<ObserverTuning>) => void;
+  step?: number;
+  min?: number;
+  max?: number;
+}) {
+  return (
+    <Row label={props.label} hint={props.hint}>
+      <NumberField
+        value={props.tuning[props.field]}
+        step={props.step}
+        min={props.min}
+        max={props.max}
+        onChange={(v) => props.onChange({ [props.field]: v } as Partial<ObserverTuning>)}
+      />
+    </Row>
+  );
+}
 
 export function SmartObserver() {
   const { settings, update } = useHudSettings();
@@ -198,6 +221,14 @@ export function SmartObserver() {
 
   if (!settings) return <p>Loading…</p>;
 
+  const tuning = settings.observerTuning;
+  function updateTuning(patch: Partial<ObserverTuning>) {
+    update({ observerTuning: { ...tuning, ...patch } });
+  }
+  function resetTuning() {
+    update({ observerTuning: DEFAULT_OBSERVER_TUNING });
+  }
+
   const shotsForMap = allShots.filter((s) => s.mapName === selectedMap);
   const mapReady = (m: string) => {
     const shots = allShots.filter((s) => s.mapName === m);
@@ -252,6 +283,64 @@ export function SmartObserver() {
             </div>
           ))
         )}
+
+        <details style={{ marginTop: 16 }}>
+          <summary style={{ cursor: "pointer", fontSize: 13, color: "var(--muted)" }}>Advanced tuning</summary>
+          <p style={{ color: "var(--muted)", fontSize: 12, marginTop: 8 }}>
+            Every number behind the scoring/decay/range/camera-switch behavior above — takes effect on the next GSI tick, no
+            restart needed. Leave alone unless something feels off; hover a field's hint for what it does.
+          </p>
+          <div style={{ marginBottom: 8 }}>
+            <button className="secondary" onClick={resetTuning}>Reset to defaults</button>
+          </div>
+
+          <h3 style={{ fontSize: 13, color: "var(--muted)", margin: "16px 0 4px" }}>Camera switching</h3>
+          <TuningRow label="Switch margin" hint="A challenger must beat the current player's score by at least this much before the camera cuts to them" tuning={tuning} field="switchMarginScore" onChange={updateTuning} />
+          <TuningRow label="Minimum dwell (ms)" hint="Minimum time between camera switches — skipped entirely once the current player has died" tuning={tuning} field="minDwellMs" onChange={updateTuning} step={100} />
+
+          <h3 style={{ fontSize: 13, color: "var(--muted)", margin: "16px 0 4px" }}>Score decay</h3>
+          <TuningRow label="Baseline half-life (ms)" hint="How fast a kill/engaging score fades by default" tuning={tuning} field="eventScoreHalfLifeMs" onChange={updateTuning} step={100} />
+          <TuningRow label="Near-enemy half-life (ms)" hint="Slower decay used while an in-view enemy is right on top of the player — the fight probably isn't over yet" tuning={tuning} field="eventScoreHalfLifeNearEnemyMs" onChange={updateTuning} step={100} />
+          <TuningRow label="No-enemy-in-sight half-life (ms)" hint="Faster decay used when no enemy is anywhere in view — they've likely moved on" tuning={tuning} field="eventScoreHalfLifeNoEnemyInSightMs" onChange={updateTuning} step={100} />
+          <TuningRow label="Near-enemy bonus max elapsed (ms)" hint="How long after a kill/shot the slower near-enemy decay still applies, even with an enemy still in view" tuning={tuning} field="nearEnemyBonusMaxElapsedMs" onChange={updateTuning} step={100} />
+
+          <h3 style={{ fontSize: 13, color: "var(--muted)", margin: "16px 0 4px" }}>Kill scoring</h3>
+          <TuningRow label="Kill base" hint="Points for any kill" tuning={tuning} field="killBase" onChange={updateTuning} />
+          <TuningRow label="Headshot bonus" tuning={tuning} field="headshotBonus" onChange={updateTuning} />
+          <TuningRow label="Multi-kill bonus (per kill)" hint="Extra points per round-kill once the attacker has 2+ this round" tuning={tuning} field="multiKillBonusPerKill" onChange={updateTuning} />
+          <TuningRow label="Trade window (ms)" hint="How long after a teammate's death a kill still counts as avenging them" tuning={tuning} field="tradeWindowMs" onChange={updateTuning} step={100} />
+          <TuningRow label="Trade bonus" tuning={tuning} field="tradeBonus" onChange={updateTuning} />
+          <TuningRow label="Clutch win base bonus" hint="Attacker is the last alive on their team, vs 1+ enemy" tuning={tuning} field="clutchWinBaseBonus" onChange={updateTuning} />
+          <TuningRow label="Clutch win bonus (per enemy)" tuning={tuning} field="clutchWinBonusPerEnemy" onChange={updateTuning} />
+
+          <h3 style={{ fontSize: 13, color: "var(--muted)", margin: "16px 0 4px" }}>Shots fired (engaging)</h3>
+          <TuningRow label="Engaging shot boost" hint="Points per shot fired, whether or not an enemy is in the crosshair" tuning={tuning} field="engagingShotBoost" onChange={updateTuning} />
+          <TuningRow label="Shooting-at-enemy bonus" hint="Extra points per shot when roughly aimed at an alive enemy" tuning={tuning} field="engagingShootingAtEnemyBonus" onChange={updateTuning} />
+          <TuningRow label="Engaging cap" hint="Ceiling on the decayed engaging contribution — stops sustained fire alone from reaching clutch-tier priority" tuning={tuning} field="engagingCap" onChange={updateTuning} />
+
+          <h3 style={{ fontSize: 13, color: "var(--muted)", margin: "16px 0 4px" }}>Situational bonuses</h3>
+          <TuningRow label="Clutch situational base" hint="Base priority for the lone survivor in a clutch" tuning={tuning} field="clutchSituationalBase" onChange={updateTuning} />
+          <TuningRow label="Clutch situational (per enemy)" tuning={tuning} field="clutchSituationalPerEnemy" onChange={updateTuning} />
+          <TuningRow label="Bomb contest" hint="Priority for every alive enemy of whoever is currently defusing" tuning={tuning} field="bombSituational" onChange={updateTuning} />
+          <TuningRow label="Proximity max" hint="Highest possible proximity contribution, scaled by closeness" tuning={tuning} field="proximityMax" onChange={updateTuning} />
+          <TuningRow label="Proximity range (units)" hint="Distance at which proximity's contribution reaches 0" tuning={tuning} field="proximityRangeUnits" onChange={updateTuning} step={50} />
+          <TuningRow label="Sniper range (units)" hint="Range used instead whenever a player is holding an AWP/SSG08/Scout — long sightlines exceed the rifle/CQC-tuned base ranges" tuning={tuning} field="sniperRangeUnits" onChange={updateTuning} step={50} />
+
+          <h3 style={{ fontSize: 13, color: "var(--muted)", margin: "16px 0 4px" }}>Team stacks</h3>
+          <TuningRow label="Stack min players" hint="Minimum teammates moving together to count as a stack" tuning={tuning} field="stackMinPlayers" onChange={updateTuning} />
+          <TuningRow label="Stack radius (units)" hint="How close together counts as one pack" tuning={tuning} field="stackRadiusUnits" onChange={updateTuning} step={50} />
+          <TuningRow label="Stack min speed (units/sec)" hint="Minimum speed to count as moving, not just standing near each other — CS2 walk speed is ~130" tuning={tuning} field="stackMinSpeedUps" onChange={updateTuning} step={10} />
+          <TuningRow label="Bomb stack bonus" hint="Priority for a T bomb carrier who's part of a moving stack" tuning={tuning} field="bombStackSituational" onChange={updateTuning} />
+          <TuningRow label="CT stack bonus" hint="Priority for each CT in a moving stack" tuning={tuning} field="ctStackSituational" onChange={updateTuning} />
+          <TuningRow label="Push-target range (units)" hint="Distance within which a defending CT gets credit for watching an incoming T stack" tuning={tuning} field="pushTargetRangeUnits" onChange={updateTuning} step={50} />
+          <TuningRow label="Push-target bonus" hint="Priority for a CT who's facing an incoming T stack within range" tuning={tuning} field="pushTargetSituational" onChange={updateTuning} />
+
+          <h3 style={{ fontSize: 13, color: "var(--muted)", margin: "16px 0 4px" }}>Flank &amp; facing detection</h3>
+          <TuningRow label="Flank range (units)" hint="Distance within which flank potential (an unnoticed angle on an enemy) can register" tuning={tuning} field="flankRangeUnits" onChange={updateTuning} step={50} />
+          <TuningRow label="Flank view cos threshold" hint="Cosine of the general-awareness view cone (flank potential, push-target facing) — 0.87 ≈ ±30°" tuning={tuning} field="flankViewCosThreshold" onChange={updateTuning} step={0.01} min={-1} max={1} />
+          <TuningRow label="Flank potential max" hint="Highest possible flank-potential contribution, scaled by closeness" tuning={tuning} field="flankPotentialMax" onChange={updateTuning} />
+          <TuningRow label="Shooting-at-enemy cos threshold" hint="Cosine of the tighter cone used to decide whether a shot was actually aimed at an enemy — 0.96 ≈ ±16°" tuning={tuning} field="shootingAtEnemyCosThreshold" onChange={updateTuning} step={0.01} min={-1} max={1} />
+        </details>
       </Card>
 
       <Card

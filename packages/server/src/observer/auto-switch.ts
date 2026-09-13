@@ -1,3 +1,5 @@
+import type { ObserverTuning } from "@cs2hud/shared";
+import { DEFAULT_OBSERVER_TUNING } from "@cs2hud/shared";
 import { getObserverQueue, isPlayerAlive } from "../gsi/observer.js";
 import { specPlayerByName } from "./netconsole.js";
 
@@ -9,9 +11,15 @@ let suppressUntil = 0;
 // dwell time between switches is what actually fixes chaotic switching —
 // scores fluctuate continuously (see gsi/observer.ts), so picking strictly
 // the highest score every tick with no hysteresis would mean the camera
-// cuts on every minor fluctuation between two close players.
-const SWITCH_MARGIN = 25;
-const MIN_DWELL_MS = 2_000;
+// cuts on every minor fluctuation between two close players. Both live in
+// `tuning` (see ObserverTuning in @cs2hud/shared) rather than being fixed,
+// and are set fresh from HudSettings on every GSI tick — see
+// setAutoSwitchTuning and gsi/listener.ts.
+let tuning: ObserverTuning = DEFAULT_OBSERVER_TUNING;
+
+export function setAutoSwitchTuning(next: ObserverTuning): void {
+  tuning = next;
+}
 
 export function resetAutoSwitchState(): void {
   currentSteamId = null;
@@ -50,7 +58,8 @@ export function suppressAutoSwitchUntil(untilMs: number): void {
  * Picks the current highest-scored player, but only actually switches to
  * them once: they're not already who we're watching, the minimum dwell
  * time has passed since the last switch, and their score beats whoever's
- * on screen right now by SWITCH_MARGIN — not just barely edges them out.
+ * on screen right now by tuning.switchMarginScore — not just barely edges
+ * them out.
  *
  * The one hard exception: if the currently-observed player has died,
  * both gates are skipped entirely — there's never a reason to keep
@@ -81,8 +90,8 @@ export async function maybeAutoSwitch(enabled: boolean): Promise<void> {
 
   if (!currentDead) {
     const currentScore = ranked.find((item) => item.playerSteamId === currentSteamId)?.priority ?? -Infinity;
-    if (top.priority - currentScore < SWITCH_MARGIN) return;
-    if (Date.now() - lastSwitchAt < MIN_DWELL_MS) return;
+    if (top.priority - currentScore < tuning.switchMarginScore) return;
+    if (Date.now() - lastSwitchAt < tuning.minDwellMs) return;
   }
 
   const sent = specPlayerByName(top.playerName);

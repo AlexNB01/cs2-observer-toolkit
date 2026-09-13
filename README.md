@@ -47,6 +47,11 @@ reinstalling — see **Backup** on the GSI Setup page to export/import them as a
 
 ## How the camera logic works
 
+Every number below (event scores, decay half-lives, ranges, facing-angle thresholds, the
+switch margin/dwell time) is a default — all of it is editable live from the **Smart Auto
+Observer** page's "Advanced tuning" section, with a "Reset to defaults" button to get back
+here. Changes apply on the next GSI tick, no restart needed.
+
 Every GSI tick, `packages/server/src/gsi/observer.ts` recomputes a single priority score
 from scratch for every alive player. `packages/server/src/observer/auto-switch.ts` then
 picks whoever's on top of that ranked list, but only actually cuts the camera to them

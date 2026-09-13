@@ -24,6 +24,23 @@ export function Row(props: { label: string; hint?: string; children: ReactNode }
   );
 }
 
+export function NumberField(props: { value: number; onChange: (v: number) => void; step?: number; min?: number; max?: number }) {
+  return (
+    <input
+      type="number"
+      className="number-field"
+      value={props.value}
+      step={props.step ?? 1}
+      min={props.min}
+      max={props.max}
+      onChange={(e) => {
+        const v = Number(e.target.value);
+        if (!Number.isNaN(v)) props.onChange(v);
+      }}
+    />
+  );
+}
+
 export function Toggle(props: { checked: boolean; onChange: (v: boolean) => void; disabled?: boolean }) {
   return (
     <input

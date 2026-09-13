@@ -1,7 +1,7 @@
 import type { FastifyInstance } from "fastify";
 import type { GsiPayload } from "@cs2hud/shared";
 import { normalizeGsiPayload } from "./normalizer.js";
-import { getLastTickShooters, processObserverEvents } from "./observer.js";
+import { getLastTickShooters, processObserverEvents, setObserverTuning } from "./observer.js";
 import { readHudSettings } from "../db/hud-settings-store.js";
 import {
   cancelBombPlantShot,
@@ -13,7 +13,7 @@ import {
   maybeShowQuietMomentShot,
   recordRoundEnd,
 } from "../cinematic/scheduler.js";
-import { maybeAutoSwitch, resetAutoSwitchState } from "../observer/auto-switch.js";
+import { maybeAutoSwitch, resetAutoSwitchState, setAutoSwitchTuning } from "../observer/auto-switch.js";
 import { broadcast } from "../ws/hub.js";
 import { db } from "../db/client.js";
 
@@ -81,6 +81,8 @@ export function registerGsiListener(app: FastifyInstance): void {
     persistLatestPayload(payload);
 
     const settings = readHudSettings();
+    setObserverTuning(settings.observerTuning);
+    setAutoSwitchTuning(settings.observerTuning);
     const events = normalizeGsiPayload(payload, previous);
     for (const event of events) {
       broadcast({ kind: "gsi_event", event });

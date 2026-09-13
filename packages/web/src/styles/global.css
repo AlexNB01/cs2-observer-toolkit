@@ -105,6 +105,7 @@ button.danger { background: var(--danger); }
 button:disabled { opacity: 0.5; cursor: not-allowed; }
 
 .toggle { width: 36px; height: 20px; accent-color: var(--accent); cursor: pointer; }
+.number-field { width: 100px; }
 
 .coming-soon { color: var(--muted); font-size: 13px; }
 .coming-soon ul { margin: 8px 0 0; padding-left: 18px; }
